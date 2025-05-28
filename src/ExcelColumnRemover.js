@@ -10,6 +10,28 @@ export default function ExcelColumnRemover() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   
+  // Function to select yellow columns
+  const selectYellowColumns = () => {
+    const yellowColumns = ['Mobile', 'Xml FileName', 'Doctor', 'Card No'];
+    const columnsToSelect = yellowColumns.filter(col => 
+      headers.some(header => header === col || header.toLowerCase() === col.toLowerCase())
+    );
+    
+    setSelectedHeaders(prev => {
+      const newSelection = [...prev];
+      columnsToSelect.forEach(col => {
+        // Find exact or case-insensitive match
+        const matchedHeader = headers.find(
+          header => header === col || header.toLowerCase() === col.toLowerCase()
+        );
+        if (matchedHeader && !newSelection.includes(matchedHeader)) {
+          newSelection.push(matchedHeader);
+        }
+      });
+      return newSelection;
+    });
+  };
+  
   // Handle file upload
   const handleFileUpload = (e) => {
     setError('');
@@ -115,6 +137,38 @@ export default function ExcelColumnRemover() {
         // Create a new workbook
         const newWorkbook = XLSX.utils.book_new();
         const newSheet = XLSX.utils.aoa_to_sheet(processedData);
+        
+        
+        // Set column widths to better fit content
+        const maxWidth = 100; // Maximum width in Excel units
+        const defaultWidth = 12; // Default column width
+        
+        // Initialize column widths object
+        if (!newSheet['!cols']) newSheet['!cols'] = [];
+        
+        // If we have data, adjust column widths based on content
+        if (processedData.length > 0) {
+          // For each column
+          for (let colIdx = 0; colIdx < processedData[0].length; colIdx++) {
+            // Check header length first
+            let maxLength = processedData[0][colIdx] ? 
+              String(processedData[0][colIdx]).length : 0;
+            
+            // Check first few data rows (limit to prevent performance issues)
+            const rowsToCheck = Math.min(20, processedData.length);
+            for (let rowIdx = 1; rowIdx < rowsToCheck; rowIdx++) {
+              if (processedData[rowIdx][colIdx]) {
+                const cellLength = String(processedData[rowIdx][colIdx]).length;
+                maxLength = Math.max(maxLength, cellLength);
+              }
+            }
+            
+            // Calculate width: roughly 0.8 characters per Excel width unit, plus some padding
+            const calculatedWidth = Math.min(maxWidth, Math.max(defaultWidth, Math.ceil(maxLength * 0.8) + 2));
+            newSheet['!cols'][colIdx] = { width: calculatedWidth };
+          }
+        }
+        
         XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Sheet1');
         
         // Convert to binary
@@ -171,7 +225,7 @@ export default function ExcelColumnRemover() {
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Upload Excel File
           </label>
-          <div className="mt-1 flex items-center">
+          <div className="mt-1 flex flex-wrap items-center gap-4">
             <label className="group relative flex items-center justify-center w-full max-w-xs h-32 px-4 py-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-indigo-500 transition-colors cursor-pointer bg-white">
               <div className="space-y-1 text-center">
                 <svg className="mx-auto h-12 w-12 text-gray-400 group-hover:text-indigo-500 transition-colors" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
@@ -193,6 +247,15 @@ export default function ExcelColumnRemover() {
                 className="absolute w-full h-full opacity-0 cursor-pointer"
               />
             </label>
+            
+            {headers.length > 0 && (
+              <button
+                onClick={selectYellowColumns}
+                className="px-4 py-3 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-md shadow-md transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+              >
+                Select Yellow Columns
+              </button>
+            )}
           </div>
           {error && (
             <div className="mt-2 rounded-md bg-red-50 p-4">
@@ -240,7 +303,11 @@ export default function ExcelColumnRemover() {
                     <div className="ml-3 text-sm">
                       <label 
                         htmlFor={`header-${index}`} 
-                        className="font-medium text-gray-700 truncate"
+                        className={`font-medium ${
+                          ['mobile', 'xml filename', 'doctor', 'card no'].includes(header.toLowerCase()) 
+                            ? 'text-yellow-600' 
+                            : 'text-gray-700'
+                        } truncate`}
                         title={header}
                       >
                         {header}
