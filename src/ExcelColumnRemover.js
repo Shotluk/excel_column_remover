@@ -1,6 +1,18 @@
+// ExcelColumnRemover_Updated.js - Updated with new column functionality
 import { useState } from 'react';
-import * as XLSX from 'xlsx';
-import ExcelJS from 'exceljs';
+
+// Import all the modular functions
+import { handleFileUpload, resetFileState } from './fileHandling.js';
+import { 
+  selectYellowColumns, 
+  processExcelData, 
+  toggleHeaderSelection, 
+  toggleMonthSelection,
+  getDefaultNewHeaders
+} from './dataProcessing.js';
+import { calculateRowsRemoved } from './dateUtilities.js';
+import { exportWithXLSX, exportWithBordersUsingExcelJS, downloadXLSXFile } from './excelExport.js';
+import { validateProcessingRequirements, validateDataAvailability, isYellowColumn, generateProcessingSummary } from './validationUtilites.js';
 
 export default function ExcelColumnRemover() {
   const [file, setFile] = useState(null);
@@ -15,212 +27,79 @@ export default function ExcelColumnRemover() {
   const [dateColumnIndex, setDateColumnIndex] = useState(-1);
   const [jsonData, setJsonData] = useState(null);
   const [useBorders, setUseBorders] = useState(true);
+  const [headerRowIndex, setHeaderRowIndex] = useState(0);
+  const [addNewColumns, setAddNewColumns] = useState(true);
+  const [newHeaders, setNewHeaders] = useState(getDefaultNewHeaders());
   
-  // Function to select yellow columns
-  const selectYellowColumns = () => {
-    const yellowColumns = ['Mobile', 'Xml FileName', 'Doctor', 'Card No'];
-    const columnsToSelect = yellowColumns.filter(col => 
-      headers.some(header => header === col || header.toLowerCase() === col.toLowerCase())
+  // Handle file upload using modular function
+  const onFileUpload = (e) => {
+    const resetState = resetFileState();
+    
+    // Reset all state
+    setFile(resetState.file);
+    setHeaders(resetState.headers);
+    setSelectedHeaders(resetState.selectedHeaders);
+    setProcessedData(resetState.processedData);
+    setFileName(resetState.fileName);
+    setMonthCounts(resetState.monthCounts);
+    setSelectedMonths(resetState.selectedMonths);
+    setDateColumnIndex(resetState.dateColumnIndex);
+    setJsonData(resetState.jsonData);
+    setHeaderRowIndex(resetState.headerRowIndex);
+    setError(resetState.error);
+    
+    handleFileUpload(
+      e,
+      // onSuccess
+      (parsedData) => {
+        setFile(e.target.files[0]);
+        setJsonData(parsedData.jsonData);
+        setHeaders(parsedData.headers);
+        setHeaderRowIndex(parsedData.headerRowIndex);
+        setMonthCounts(parsedData.monthCounts);
+        setDateColumnIndex(parsedData.dateColumnIndex);
+        setFileName(parsedData.fileName);
+      },
+      // onError
+      (errorMessage) => setError(errorMessage),
+      // onLoadingStart
+      () => setIsLoading(true),
+      // onLoadingEnd
+      () => setIsLoading(false)
     );
-    
-    setSelectedHeaders(prev => {
-      const newSelection = [...prev];
-      columnsToSelect.forEach(col => {
-        // Find exact or case-insensitive match
-        const matchedHeader = headers.find(
-          header => header === col || header.toLowerCase() === col.toLowerCase()
-        );
-        if (matchedHeader && !newSelection.includes(matchedHeader)) {
-          newSelection.push(matchedHeader);
-        }
-      });
-      return newSelection;
-    });
   };
   
-  // Function to toggle month selection for removal
-  const toggleMonthSelection = (month) => {
-    setSelectedMonths(prev => {
-      if (prev.includes(month)) {
-        return prev.filter(m => m !== month);
-      } else {
-        return [...prev, month];
-      }
-    });
+  // Handle yellow columns selection using modular function
+  const handleSelectYellowColumns = () => {
+    const newSelection = selectYellowColumns(headers, selectedHeaders);
+    setSelectedHeaders(newSelection);
   };
   
-  // Function to count entries by month - KEEPING EXACTLY AS IN ORIGINAL
-  const countEntriesByMonth = (jsonData) => {
-    // Find the Date column index
-    const headerRow = jsonData[0];
-    const dateColIndex = headerRow.findIndex(
-      header => header === 'Date' || header.toLowerCase() === 'date'
-    );
-    
-    setDateColumnIndex(dateColIndex);
-    
-    if (dateColIndex === -1) {
-      console.log("No 'Date' column found");
-      return null;
-    }
-    
-    // Initialize month counters with month numbers for sorting
-    const months = {
-      '01': { name: 'January', code: '01', count: 0 },
-      '02': { name: 'February', code: '02', count: 0 },
-      '03': { name: 'March', code: '03', count: 0 },
-      '04': { name: 'April', code: '04', count: 0 },
-      '05': { name: 'May', code: '05', count: 0 },
-      '06': { name: 'June', code: '06', count: 0 },
-      '07': { name: 'July', code: '07', count: 0 },
-      '08': { name: 'August', code: '08', count: 0 },
-      '09': { name: 'September', code: '09', count: 0 },
-      '10': { name: 'October', code: '10', count: 0 },
-      '11': { name: 'November', code: '11', count: 0 },
-      '12': { name: 'December', code: '12', count: 0 }
-    };
-    
-    // Count entries for each month
-    for (let i = 1; i < jsonData.length; i++) {
-      const row = jsonData[i];
-      if (row[dateColIndex]) {
-        const dateValue = String(row[dateColIndex]);
-        
-        // Try different date formats
-        let monthCode = null;
-        
-        // Format: DD/MM/YYYY
-        const ddmmyyyyMatch = dateValue.match(/(\d{2})\/(\d{2})\/\d{4}/);
-        if (ddmmyyyyMatch) {
-          monthCode = ddmmyyyyMatch[2]; // Month is the second capture group
-        }
-        
-        // Format: MM/DD/YYYY (as fallback)
-        const mmddyyyyMatch = dateValue.match(/(\d{2})\/\d{2}\/\d{4}/);
-        if (!monthCode && mmddyyyyMatch) {
-          monthCode = mmddyyyyMatch[1];
-        }
-        
-        // If we found a month, increment the counter
-        if (monthCode && months[monthCode]) {
-          months[monthCode].count++;
-        }
-      }
-    }
-    
-    // Filter out months with zero entries and sort by month number
-    const results = Object.entries(months)
-      .filter(([_, data]) => data.count > 0)
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([code, data]) => ({
-        month: data.name,
-        code: data.code,
-        count: data.count
-      }));
-    
-    console.log("Month counts:", results);
-    return results;
+  // Handle header toggle using modular function
+  const handleToggleHeader = (header) => {
+    const newSelection = toggleHeaderSelection(header, selectedHeaders);
+    setSelectedHeaders(newSelection);
   };
   
-  // Get month code from date string - KEEPING EXACTLY AS IN ORIGINAL
-  const getMonthFromDate = (dateStr) => {
-    if (!dateStr) return null;
-    
-    // Format: DD/MM/YYYY
-    const ddmmyyyyMatch = dateStr.match(/(\d{2})\/(\d{2})\/\d{4}/);
-    if (ddmmyyyyMatch) {
-      return ddmmyyyyMatch[2]; // Month is the second capture group
-    }
-    
-    // Format: MM/DD/YYYY (as fallback)
-    const mmddyyyyMatch = dateStr.match(/(\d{2})\/\d{2}\/\d{4}/);
-    if (mmddyyyyMatch) {
-      return mmddyyyyMatch[1];
-    }
-    
-    return null;
+  // Handle month toggle using modular function
+  const handleToggleMonth = (month) => {
+    const newSelection = toggleMonthSelection(month, selectedMonths);
+    setSelectedMonths(newSelection);
   };
   
-  // Handle file upload
-  const handleFileUpload = (e) => {
-    setError('');
-    setHeaders([]);
-    setSelectedHeaders([]);
-    setProcessedData(null);
-    setMonthCounts(null);
-    setSelectedMonths([]);
-    setDateColumnIndex(-1);
-    setJsonData(null);
-    
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    const fileExt = file.name.split('.').pop().toLowerCase();
-    if (!['xlsx', 'xls', 'csv'].includes(fileExt)) {
-      setError('Please upload an Excel or CSV file');
+  // Process the file using modular functions
+  const processFile = async () => {
+    // Validate requirements
+    const requirementValidation = validateProcessingRequirements(selectedHeaders, selectedMonths);
+    if (!requirementValidation.isValid) {
+      setError(requirementValidation.message);
       return;
     }
     
-    setIsLoading(true);
-    setFile(file);
-    setFileName(file.name);
-    
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
-        
-        // Get the first sheet
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        
-        // Convert to JSON
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-        setJsonData(jsonData);
-        
-        if (jsonData.length === 0 || jsonData[0].length === 0) {
-          setError('The file appears to be empty or has no headers');
-          setIsLoading(false);
-          return;
-        }
-        
-        // Extract headers (first row)
-        const headers = jsonData[0];
-        setHeaders(headers);
-        
-        // Count entries by month
-        const monthData = countEntriesByMonth(jsonData);
-        setMonthCounts(monthData);
-        
-        setIsLoading(false);
-      } catch (error) {
-        console.error('Error processing file:', error);
-        setError('Error processing file. Please try a different file.');
-        setIsLoading(false);
-      }
-    };
-    
-    reader.onerror = () => {
-      setError('Error reading file');
-      setIsLoading(false);
-    };
-    
-    reader.readAsArrayBuffer(file);
-  };
-  
-  // Toggle header selection
-  const toggleHeaderSelection = (header) => {
-    setSelectedHeaders(prev => 
-      prev.includes(header) 
-        ? prev.filter(h => h !== header) 
-        : [...prev, header]
-    );
-  };
-  
-  // Process the file - remove selected columns and filter by selected months
-  const processFile = () => {
-    if (!file || (!selectedHeaders.length && !selectedMonths.length)) {
-      setError('Please select at least one column or month to remove');
+    // Validate data availability
+    const dataValidation = validateDataAvailability(jsonData);
+    if (!dataValidation.isValid) {
+      setError(dataValidation.message);
       return;
     }
     
@@ -228,104 +107,28 @@ export default function ExcelColumnRemover() {
     setError('');
     
     try {
-      if (!jsonData) {
-        setError('No data available for processing');
-        setIsLoading(false);
-        return;
-      }
-      
-      // Get indices of headers to remove
-      const headerIndices = selectedHeaders.map(header => 
-        jsonData[0].findIndex(h => h === header)
-      ).filter(index => index !== -1);
-      
-      // Get month codes to filter out
-      const monthCodesToRemove = selectedMonths.map(month => {
-        const foundMonth = monthCounts.find(m => m.month === month);
-        return foundMonth ? foundMonth.code : null;
-      }).filter(code => code !== null);
-      
-      // First filter rows based on selected months (if any)
-      let filteredData = jsonData;
-      
-      if (selectedMonths.length > 0 && dateColumnIndex !== -1) {
-        filteredData = [jsonData[0]]; // Keep header row
-        
-        // Add rows that don't match the excluded months
-        for (let i = 1; i < jsonData.length; i++) {
-          const row = jsonData[i];
-          if (row[dateColumnIndex]) {
-            const dateValue = String(row[dateColumnIndex]);
-            const monthCode = getMonthFromDate(dateValue);
-            
-            // Include row only if its month is not in the exclusion list
-            if (!monthCode || !monthCodesToRemove.includes(monthCode)) {
-              filteredData.push(row);
-            }
-          } else {
-            // Include rows with no date value
-            filteredData.push(row);
-          }
-        }
-      }
-      
-      // Then remove selected columns
-      const processedData = filteredData.map(row => 
-        row.filter((_, index) => !headerIndices.includes(index))
+      // Process data using modular function
+      const processedDataArray = processExcelData(
+        jsonData, 
+        headerRowIndex, 
+        selectedHeaders, 
+        selectedMonths, 
+        monthCounts, 
+        dateColumnIndex,
+        addNewColumns ? newHeaders : []
       );
       
       if (useBorders) {
         // Use ExcelJS for styling with borders
-        exportWithBordersUsingExcelJS(processedData);
+        await exportWithBordersUsingExcelJS(processedDataArray, fileName, selectedMonths);
         setProcessedData(true); // Just to indicate processing is done
-        setIsLoading(false);
       } else {
-        // Use the original XLSX library approach
-        // Create a new workbook
-        const newWorkbook = XLSX.utils.book_new();
-        const newSheet = XLSX.utils.aoa_to_sheet(processedData);
-        
-        // Set column widths to better fit content
-        const maxWidth = 100; // Maximum width in Excel units
-        const defaultWidth = 12; // Default column width
-        
-        // Initialize column widths object
-        if (!newSheet['!cols']) newSheet['!cols'] = [];
-        
-        // If we have data, adjust column widths based on content
-        if (processedData.length > 0) {
-          // For each column
-          for (let colIdx = 0; colIdx < processedData[0].length; colIdx++) {
-            // Check header length first
-            let maxLength = processedData[0][colIdx] ? 
-              String(processedData[0][colIdx]).length : 0;
-            
-            // Check first few data rows (limit to prevent performance issues)
-            const rowsToCheck = Math.min(20, processedData.length);
-            for (let rowIdx = 1; rowIdx < rowsToCheck; rowIdx++) {
-              if (processedData[rowIdx][colIdx]) {
-                const cellLength = String(processedData[rowIdx][colIdx]).length;
-                maxLength = Math.max(maxLength, cellLength);
-              }
-            }
-            
-            // Calculate width: roughly 0.8 characters per Excel width unit, plus some padding
-            const calculatedWidth = Math.min(maxWidth, Math.max(defaultWidth, Math.ceil(maxLength * 0.8) + 2));
-            newSheet['!cols'][colIdx] = { width: calculatedWidth };
-          }
-        }
-        
-        XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Sheet1');
-        
-        // Convert to binary
-        const excelBinary = XLSX.write(newWorkbook, { 
-          bookType: 'xlsx', 
-          type: 'array' 
-        });
-        
+        // Use the XLSX library approach
+        const excelBinary = exportWithXLSX(processedDataArray);
         setProcessedData(excelBinary);
-        setIsLoading(false);
       }
+      
+      setIsLoading(false);
     } catch (error) {
       console.error('Error processing file:', error);
       setError('Error processing file: ' + error.message);
@@ -333,199 +136,15 @@ export default function ExcelColumnRemover() {
     }
   };
   
-  // Export with borders using ExcelJS
-  const exportWithBordersUsingExcelJS = async (data) => {
-    try {
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Sheet1');
-      
-      // First, identify potential date columns by header name
-      const dateColumnIndices = [];
-      if (data.length > 0) {
-        data[0].forEach((header, index) => {
-          if (header && typeof header === 'string' && 
-              (header.toLowerCase().includes('date') || 
-               header.toLowerCase().includes('time') ||
-               header.toLowerCase().includes('submission'))) {
-            dateColumnIndices.push(index);
-          }
-        });
-      }
-      
-      console.log("Identified date columns at indices:", dateColumnIndices);
-      
-      // Determine which rows are actual data rows (vs. metadata, page numbers, etc.)
-      // Strategy: Look for rows that have consistent structure with the headers
-      const tableRowIndices = [];
-      const headerRow = data[0];
-      const headerCellCount = headerRow.length;
-      
-      // Consider header row as part of the table
-      tableRowIndices.push(0);
-      
-      // Check each data row
-      for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
-        const row = data[rowIndex];
-        
-        // Check if this looks like a data row (has similar structure to header)
-        // Criteria: Has at least half as many cells as the header row
-        // and doesn't contain typical footer text like "Page"
-        const cellCount = row.filter(cell => cell !== undefined && cell !== null && cell !== '').length;
-        const isLikelyFooter = row.some(cell => 
-          cell && typeof cell === 'string' && 
-          (cell.includes('Page') || cell.includes('of ') || 
-           cell.match(/^\d+\s*of\s*\d+$/i) || // "1 of 5" pattern
-           cell.match(/^-?\d+$/) && parseInt(cell) < 100) // Just a small number by itself
-        );
-        
-        if (cellCount >= headerCellCount / 2 && !isLikelyFooter) {
-          tableRowIndices.push(rowIndex);
-        }
-      }
-      
-      console.log("Identified table rows:", tableRowIndices);
-      
-      // Add header row
-      if (data.length > 0) {
-        worksheet.addRow(data[0]);
-      }
-      
-      // Add data rows with special handling for date columns
-      for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
-        const row = data[rowIndex];
-        const newRow = worksheet.addRow(row);
-        
-        // Apply special formatting to date columns
-        dateColumnIndices.forEach(colIndex => {
-          if (colIndex < row.length) {
-            const cell = newRow.getCell(colIndex + 1); // +1 because ExcelJS is 1-indexed
-            const value = row[colIndex];
-            
-            // Check if it's a numeric string that could be an Excel date serial
-            if (value && !isNaN(value)) {
-              const numValue = parseFloat(value);
-              // Excel date serial numbers are typically in this range
-              if (numValue > 40000 && numValue < 50000) {
-                // Convert Excel serial number to JavaScript Date
-                const excelEpoch = new Date(1899, 11, 30); // Excel's epoch
-                const millisecondsPerDay = 24 * 60 * 60 * 1000;
-                const dateObj = new Date(excelEpoch.getTime() + numValue * millisecondsPerDay);
-                
-                // Store as Date object but with specific formatting
-                cell.value = dateObj;
-                cell.numFmt = 'dd/mm/yyyy h:mm:ss AM/PM'; // Format exactly as you want
-              }
-            }
-          }
-        });
-      }
-      
-      // Apply borders only to table cells (not to page numbers, metadata, etc.)
-      worksheet.eachRow((row, rowIndex) => {
-        // Check if this row is part of the table (add 1 because worksheet rows are 1-indexed)
-        const isTableRow = tableRowIndices.includes(rowIndex - 1);
-        
-        if (isTableRow) {
-          // This is a table row, apply borders to its cells
-          row.eachCell((cell) => {
-            cell.border = {
-              top: { style: 'thin', color: { argb: 'FF000000' } },
-              bottom: { style: 'thin', color: { argb: 'FF000000' } },
-              left: { style: 'thin', color: { argb: 'FF000000' } },
-              right: { style: 'thin', color: { argb: 'FF000000' } },
-            };
-          });
-        }
-      });
-      
-      // Set column widths automatically
-      worksheet.columns.forEach((column, i) => {
-        // For date columns, set wider
-        if (dateColumnIndices.includes(i)) {
-          column.width = 22; // Wide enough for date + time format
-        } else {
-          let maxLength = 10;
-          column.eachCell({ includeEmpty: true }, (cell) => {
-            const val = cell.value ? cell.value.toString() : '';
-            maxLength = Math.max(maxLength, val.length);
-          });
-          column.width = maxLength + 2;
-        }
-      });
-      
-      // Create and download the file
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
-      
-      let downloadName = `modified_${fileName}`;
-      
-      // Add info about what was removed to the filename
-      if (selectedMonths.length > 0) {
-        downloadName = `without_${selectedMonths.join('_')}_${fileName}`;
-      }
-      
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = downloadName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error with ExcelJS:', error);
-      setError('Error with ExcelJS: ' + error.message + '. Falling back to basic export.');
-      
-      // Fall back to basic XLSX export
-      const newWorkbook = XLSX.utils.book_new();
-      const newSheet = XLSX.utils.aoa_to_sheet(data);
-      XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Sheet1');
-      
-      const excelBinary = XLSX.write(newWorkbook, { 
-        bookType: 'xlsx', 
-        type: 'array' 
-      });
-      
-      setProcessedData(excelBinary);
-      setUseBorders(false);
-    }
-  };
-  
   // Download the processed file (for non-ExcelJS method)
   const downloadFile = () => {
     if (!processedData || useBorders) return;
-    
-    const blob = new Blob([processedData], { 
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
-    });
-    
-    let downloadName = `modified_${fileName}`;
-    
-    // Add info about what was removed to the filename
-    if (selectedMonths.length > 0) {
-      downloadName = `without_${selectedMonths.join('_')}_${fileName}`;
-    }
-    
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = downloadName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadXLSXFile(processedData, fileName, selectedMonths);
   };
   
-  // Calculate rows removed due to month filtering
-  const calculateRowsRemoved = () => {
-    if (!selectedMonths.length || !monthCounts) return 0;
-    
-    return selectedMonths.reduce((total, month) => {
-      const monthData = monthCounts.find(m => m.month === month);
-      return total + (monthData ? monthData.count : 0);
-    }, 0);
+  // Calculate rows removed using modular function
+  const getRowsRemoved = () => {
+    return calculateRowsRemoved(selectedMonths, monthCounts);
   };
   
   return (
@@ -559,14 +178,14 @@ export default function ExcelColumnRemover() {
               <input 
                 type="file" 
                 accept=".xlsx,.xls,.csv" 
-                onChange={handleFileUpload} 
+                onChange={onFileUpload} 
                 className="absolute w-full h-full opacity-0 cursor-pointer"
               />
             </label>
             
             {headers.length > 0 && (
               <button
-                onClick={selectYellowColumns}
+                onClick={handleSelectYellowColumns}
                 className="px-4 py-3 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-md shadow-md transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
               >
                 Select Yellow Columns
@@ -626,7 +245,7 @@ export default function ExcelColumnRemover() {
                         ? 'bg-red-100 border-red-300'
                         : 'bg-white border-indigo-100 hover:border-indigo-300'
                     }`}
-                    onClick={() => toggleMonthSelection(item.month)}
+                    onClick={() => handleToggleMonth(item.month)}
                   >
                     <div className={`text-lg font-semibold ${
                       selectedMonths.includes(item.month) 
@@ -654,7 +273,7 @@ export default function ExcelColumnRemover() {
                 </div>
                 {selectedMonths.length > 0 && (
                   <div className="text-red-600 font-medium">
-                    {calculateRowsRemoved()} entries marked for removal
+                    {getRowsRemoved()} entries marked for removal
                   </div>
                 )}
               </div>
@@ -688,7 +307,7 @@ export default function ExcelColumnRemover() {
                         id={`header-${index}`}
                         type="checkbox"
                         checked={selectedHeaders.includes(header)}
-                        onChange={() => toggleHeaderSelection(header)}
+                        onChange={() => handleToggleHeader(header)}
                         className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                       />
                     </div>
@@ -696,7 +315,7 @@ export default function ExcelColumnRemover() {
                       <label 
                         htmlFor={`header-${index}`} 
                         className={`font-medium ${
-                          ['mobile', 'xml filename', 'doctor', 'card no'].includes(header.toLowerCase()) 
+                          isYellowColumn(header) 
                             ? 'text-yellow-600' 
                             : 'text-gray-700'
                         } truncate`}
@@ -750,7 +369,7 @@ export default function ExcelColumnRemover() {
                     <span> Removed columns: <span className="font-semibold">{selectedHeaders.join(', ')}</span></span>
                   )}
                   {selectedMonths.length > 0 && (
-                    <span> Removed {calculateRowsRemoved()} entries from: <span className="font-semibold">{selectedMonths.join(', ')}</span></span>
+                    <span> Removed {getRowsRemoved()} entries from: <span className="font-semibold">{selectedMonths.join(', ')}</span></span>
                   )}
                   {useBorders && (
                     <span> Applied <span className="font-semibold">thick borders</span> to all cells.</span>
@@ -775,4 +394,5 @@ export default function ExcelColumnRemover() {
         )}
       </div>
     </div>
-  )}
+  );
+}
