@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 export default function ExcelColumnRemover() {
   const [file, setFile] = useState(null);
@@ -13,6 +14,7 @@ export default function ExcelColumnRemover() {
   const [selectedMonths, setSelectedMonths] = useState([]);
   const [dateColumnIndex, setDateColumnIndex] = useState(-1);
   const [jsonData, setJsonData] = useState(null);
+  const [useBorders, setUseBorders] = useState(true);
   
   // Function to select yellow columns
   const selectYellowColumns = () => {
@@ -47,7 +49,7 @@ export default function ExcelColumnRemover() {
     });
   };
   
-  // Function to count entries by month
+  // Function to count entries by month - KEEPING EXACTLY AS IN ORIGINAL
   const countEntriesByMonth = (jsonData) => {
     // Find the Date column index
     const headerRow = jsonData[0];
@@ -120,7 +122,7 @@ export default function ExcelColumnRemover() {
     return results;
   };
   
-  // Get month code from date string
+  // Get month code from date string - KEEPING EXACTLY AS IN ORIGINAL
   const getMonthFromDate = (dateStr) => {
     if (!dateStr) return null;
     
@@ -272,62 +274,193 @@ export default function ExcelColumnRemover() {
         row.filter((_, index) => !headerIndices.includes(index))
       );
       
-      // Create a new workbook
-      const newWorkbook = XLSX.utils.book_new();
-      const newSheet = XLSX.utils.aoa_to_sheet(processedData);
-      
-      // Set column widths to better fit content
-      const maxWidth = 100; // Maximum width in Excel units
-      const defaultWidth = 12; // Default column width
-      
-      // Initialize column widths object
-      if (!newSheet['!cols']) newSheet['!cols'] = [];
-      
-      // If we have data, adjust column widths based on content
-      if (processedData.length > 0) {
-        // For each column
-        for (let colIdx = 0; colIdx < processedData[0].length; colIdx++) {
-          // Check header length first
-          let maxLength = processedData[0][colIdx] ? 
-            String(processedData[0][colIdx]).length : 0;
-          
-          // Check first few data rows (limit to prevent performance issues)
-          const rowsToCheck = Math.min(20, processedData.length);
-          for (let rowIdx = 1; rowIdx < rowsToCheck; rowIdx++) {
-            if (processedData[rowIdx][colIdx]) {
-              const cellLength = String(processedData[rowIdx][colIdx]).length;
-              maxLength = Math.max(maxLength, cellLength);
+      if (useBorders) {
+        // Use ExcelJS for styling with borders
+        exportWithBordersUsingExcelJS(processedData);
+        setProcessedData(true); // Just to indicate processing is done
+        setIsLoading(false);
+      } else {
+        // Use the original XLSX library approach
+        // Create a new workbook
+        const newWorkbook = XLSX.utils.book_new();
+        const newSheet = XLSX.utils.aoa_to_sheet(processedData);
+        
+        // Set column widths to better fit content
+        const maxWidth = 100; // Maximum width in Excel units
+        const defaultWidth = 12; // Default column width
+        
+        // Initialize column widths object
+        if (!newSheet['!cols']) newSheet['!cols'] = [];
+        
+        // If we have data, adjust column widths based on content
+        if (processedData.length > 0) {
+          // For each column
+          for (let colIdx = 0; colIdx < processedData[0].length; colIdx++) {
+            // Check header length first
+            let maxLength = processedData[0][colIdx] ? 
+              String(processedData[0][colIdx]).length : 0;
+            
+            // Check first few data rows (limit to prevent performance issues)
+            const rowsToCheck = Math.min(20, processedData.length);
+            for (let rowIdx = 1; rowIdx < rowsToCheck; rowIdx++) {
+              if (processedData[rowIdx][colIdx]) {
+                const cellLength = String(processedData[rowIdx][colIdx]).length;
+                maxLength = Math.max(maxLength, cellLength);
+              }
             }
+            
+            // Calculate width: roughly 0.8 characters per Excel width unit, plus some padding
+            const calculatedWidth = Math.min(maxWidth, Math.max(defaultWidth, Math.ceil(maxLength * 0.8) + 2));
+            newSheet['!cols'][colIdx] = { width: calculatedWidth };
           }
-          
-          // Calculate width: roughly 0.8 characters per Excel width unit, plus some padding
-          const calculatedWidth = Math.min(maxWidth, Math.max(defaultWidth, Math.ceil(maxLength * 0.8) + 2));
-          newSheet['!cols'][colIdx] = { width: calculatedWidth };
         }
+        
+        XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Sheet1');
+        
+        // Convert to binary
+        const excelBinary = XLSX.write(newWorkbook, { 
+          bookType: 'xlsx', 
+          type: 'array' 
+        });
+        
+        setProcessedData(excelBinary);
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setError('Error processing file: ' + error.message);
+      setIsLoading(false);
+    }
+  };
+  
+  // Export with borders using ExcelJS
+  const exportWithBordersUsingExcelJS = async (data) => {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Sheet1');
+      
+      // First, identify potential date columns by header name
+      const dateColumnIndices = [];
+      if (data.length > 0) {
+        data[0].forEach((header, index) => {
+          if (header && typeof header === 'string' && 
+              (header.toLowerCase().includes('date') || 
+               header.toLowerCase().includes('time') ||
+               header.toLowerCase().includes('submission'))) {
+            dateColumnIndices.push(index);
+          }
+        });
       }
       
+      console.log("Identified date columns at indices:", dateColumnIndices);
       
+      // Add header row
+      if (data.length > 0) {
+        worksheet.addRow(data[0]);
+      }
       
+      // Add data rows with special handling for date columns
+      for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
+        const row = data[rowIndex];
+        const newRow = worksheet.addRow(row);
+        
+        // Apply special formatting to date columns
+        dateColumnIndices.forEach(colIndex => {
+          if (colIndex < row.length) {
+            const cell = newRow.getCell(colIndex + 1); // +1 because ExcelJS is 1-indexed
+            const value = row[colIndex];
+            
+            // Check if it's a numeric string that could be an Excel date serial
+            if (value && !isNaN(value)) {
+              const numValue = parseFloat(value);
+              // Excel date serial numbers are typically in this range
+              if (numValue > 40000 && numValue < 50000) {
+                // Convert Excel serial number to JavaScript Date
+                const excelEpoch = new Date(1899, 11, 30); // Excel's epoch
+                const millisecondsPerDay = 24 * 60 * 60 * 1000;
+                const dateObj = new Date(excelEpoch.getTime() + numValue * millisecondsPerDay);
+                
+                // Store as Date object but with specific formatting
+                cell.value = dateObj;
+                cell.numFmt = 'dd/mm/yyyy h:mm:ss AM/PM'; // Format exactly as you want
+                
+              }
+            }
+          }
+        });
+      }
+      
+      // Apply "All Borders" styling to every cell
+      worksheet.eachRow((row) => {
+        row.eachCell((cell) => {
+          // Apply borders
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FF000000' } },
+            bottom: { style: 'thin', color: { argb: 'FF000000' } },
+            left: { style: 'thin', color: { argb: 'FF000000' } },
+            right: { style: 'thin', color: { argb: 'FF000000' } },
+          };
+        });
+      });
+      
+      // Set column widths automatically
+      worksheet.columns.forEach((column, i) => {
+        // For date columns, set wider
+        if (dateColumnIndices.includes(i)) {
+          column.width = 22; // Wide enough for date + time format
+        } else {
+          let maxLength = 10;
+          column.eachCell({ includeEmpty: true }, (cell) => {
+            const val = cell.value ? cell.value.toString() : '';
+            maxLength = Math.max(maxLength, val.length);
+          });
+          column.width = maxLength + 2;
+        }
+      });
+      
+      // Create and download the file
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      
+      let downloadName = `modified_${fileName}`;
+      
+      // Add info about what was removed to the filename
+      if (selectedMonths.length > 0) {
+        downloadName = `without_${selectedMonths.join('_')}_${fileName}`;
+      }
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error with ExcelJS:', error);
+      setError('Error with ExcelJS: ' + error.message + '. Falling back to basic export.');
+      
+      // Fall back to basic XLSX export
+      const newWorkbook = XLSX.utils.book_new();
+      const newSheet = XLSX.utils.aoa_to_sheet(data);
       XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Sheet1');
       
-      // Convert to binary
       const excelBinary = XLSX.write(newWorkbook, { 
         bookType: 'xlsx', 
         type: 'array' 
       });
       
       setProcessedData(excelBinary);
-      setIsLoading(false);
-    } catch (error) {
-      console.error('Error processing file:', error);
-      setError('Error processing file. Please try again.');
-      setIsLoading(false);
+      setUseBorders(false);
     }
   };
   
-  // Download the processed file
+  // Download the processed file (for non-ExcelJS method)
   const downloadFile = () => {
-    if (!processedData) return;
+    if (!processedData || useBorders) return;
     
     const blob = new Blob([processedData], { 
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
@@ -405,6 +538,25 @@ export default function ExcelColumnRemover() {
               </button>
             )}
           </div>
+          
+          {/* Styling option */}
+          {headers.length > 0 && (
+            <div className="mt-4">
+              <div className="flex items-center">
+                <input
+                  id="borders-checkbox"
+                  type="checkbox"
+                  checked={useBorders}
+                  onChange={() => setUseBorders(!useBorders)}
+                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                />
+                <label htmlFor="borders-checkbox" className="ml-2 block text-sm text-gray-700">
+                  Apply thick borders to all cells (using ExcelJS)
+                </label>
+              </div>
+            </div>
+          )}
+          
           {error && (
             <div className="mt-2 rounded-md bg-red-50 p-4">
               <div className="flex">
@@ -565,23 +717,27 @@ export default function ExcelColumnRemover() {
                   {selectedMonths.length > 0 && (
                     <span> Removed {calculateRowsRemoved()} entries from: <span className="font-semibold">{selectedMonths.join(', ')}</span></span>
                   )}
+                  {useBorders && (
+                    <span> Applied <span className="font-semibold">thin borders</span> to all cells.</span>
+                  )}
                 </p>
               </div>
             </div>
-            <div className="mt-4">
-              <button
-                onClick={downloadFile}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              >
-                <svg className="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download Modified File
-              </button>
-            </div>
+            {!useBorders && (
+              <div className="mt-4">
+                <button
+                  onClick={downloadFile}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                >
+                  <svg className="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download Modified File
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
-  );
-}
+  )}
