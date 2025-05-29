@@ -59,6 +59,10 @@ export default function ExcelColumnRemover() {
         setMonthCounts(parsedData.monthCounts);
         setDateColumnIndex(parsedData.dateColumnIndex);
         setFileName(parsedData.fileName);
+
+        // Auto-select yellow columns immediately after file upload
+        const autoSelectedHeaders = selectYellowColumns(parsedData.headers, []);
+        setSelectedHeaders(autoSelectedHeaders);
       },
       // onError
       (errorMessage) => setError(errorMessage),
@@ -183,14 +187,7 @@ export default function ExcelColumnRemover() {
               />
             </label>
             
-            {headers.length > 0 && (
-              <button
-                onClick={handleSelectYellowColumns}
-                className="px-4 py-3 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-md shadow-md transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
-              >
-                Select Yellow Columns
-              </button>
-            )}
+            
           </div>
           
           {/* Styling option */}

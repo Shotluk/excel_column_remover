@@ -240,7 +240,7 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
       }
       // For other columns, calculate based on content
       else {
-        let maxLength = 25;
+        let maxLength = 15;
         // column.eachCell({ includeEmpty: true }, (cell) => {
         //   const val = cell.value ? cell.value.toString() : '';
         //   maxLength = Math.max(maxLength, val.length);

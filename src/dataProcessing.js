@@ -9,7 +9,7 @@ import { getMonthFromDate } from './dateUtilities.js';
  * @returns {Array} Updated array of selected headers
  */
 export const selectYellowColumns = (headers, currentSelectedHeaders) => {
-  const yellowColumns = ['Mobile', 'Xml FileName', 'Doctor', 'Card No'];
+  const yellowColumns = ['Mobile', 'Payer', 'Claim ID', 'Submission Date', 'Xml FileName', 'Doctor', 'Card No', 'Services'];
   const columnsToSelect = yellowColumns.filter(col => 
     headers.some(header => header === col || header.toLowerCase() === col.toLowerCase())
   );

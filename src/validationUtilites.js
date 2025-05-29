@@ -45,7 +45,7 @@ export const validateDataAvailability = (data) => {
  * @returns {boolean} True if header is a yellow column
  */
 export const isYellowColumn = (header) => {
-  const yellowColumns = ['mobile', 'xml filename', 'doctor', 'card no'];
+  const yellowColumns = ['mobile', 'payer', 'claim id', 'submission date', 'xml filename', 'doctor', 'card no', 'services'];
   return yellowColumns.includes(header.toLowerCase());
 };
 
