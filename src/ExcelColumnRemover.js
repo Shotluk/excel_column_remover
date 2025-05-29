@@ -354,6 +354,37 @@ export default function ExcelColumnRemover() {
       
       console.log("Identified date columns at indices:", dateColumnIndices);
       
+      // Determine which rows are actual data rows (vs. metadata, page numbers, etc.)
+      // Strategy: Look for rows that have consistent structure with the headers
+      const tableRowIndices = [];
+      const headerRow = data[0];
+      const headerCellCount = headerRow.length;
+      
+      // Consider header row as part of the table
+      tableRowIndices.push(0);
+      
+      // Check each data row
+      for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
+        const row = data[rowIndex];
+        
+        // Check if this looks like a data row (has similar structure to header)
+        // Criteria: Has at least half as many cells as the header row
+        // and doesn't contain typical footer text like "Page"
+        const cellCount = row.filter(cell => cell !== undefined && cell !== null && cell !== '').length;
+        const isLikelyFooter = row.some(cell => 
+          cell && typeof cell === 'string' && 
+          (cell.includes('Page') || cell.includes('of ') || 
+           cell.match(/^\d+\s*of\s*\d+$/i) || // "1 of 5" pattern
+           cell.match(/^-?\d+$/) && parseInt(cell) < 100) // Just a small number by itself
+        );
+        
+        if (cellCount >= headerCellCount / 2 && !isLikelyFooter) {
+          tableRowIndices.push(rowIndex);
+        }
+      }
+      
+      console.log("Identified table rows:", tableRowIndices);
+      
       // Add header row
       if (data.length > 0) {
         worksheet.addRow(data[0]);
@@ -383,24 +414,28 @@ export default function ExcelColumnRemover() {
                 // Store as Date object but with specific formatting
                 cell.value = dateObj;
                 cell.numFmt = 'dd/mm/yyyy h:mm:ss AM/PM'; // Format exactly as you want
-                
               }
             }
           }
         });
       }
       
-      // Apply "All Borders" styling to every cell
-      worksheet.eachRow((row) => {
-        row.eachCell((cell) => {
-          // Apply borders
-          cell.border = {
-            top: { style: 'thin', color: { argb: 'FF000000' } },
-            bottom: { style: 'thin', color: { argb: 'FF000000' } },
-            left: { style: 'thin', color: { argb: 'FF000000' } },
-            right: { style: 'thin', color: { argb: 'FF000000' } },
-          };
-        });
+      // Apply borders only to table cells (not to page numbers, metadata, etc.)
+      worksheet.eachRow((row, rowIndex) => {
+        // Check if this row is part of the table (add 1 because worksheet rows are 1-indexed)
+        const isTableRow = tableRowIndices.includes(rowIndex - 1);
+        
+        if (isTableRow) {
+          // This is a table row, apply borders to its cells
+          row.eachCell((cell) => {
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FF000000' } },
+              bottom: { style: 'thin', color: { argb: 'FF000000' } },
+              left: { style: 'thin', color: { argb: 'FF000000' } },
+              right: { style: 'thin', color: { argb: 'FF000000' } },
+            };
+          });
+        }
       });
       
       // Set column widths automatically
@@ -718,7 +753,7 @@ export default function ExcelColumnRemover() {
                     <span> Removed {calculateRowsRemoved()} entries from: <span className="font-semibold">{selectedMonths.join(', ')}</span></span>
                   )}
                   {useBorders && (
-                    <span> Applied <span className="font-semibold">thin borders</span> to all cells.</span>
+                    <span> Applied <span className="font-semibold">thick borders</span> to all cells.</span>
                   )}
                 </p>
               </div>
