@@ -1,5 +1,6 @@
-// ExcelColumnRemover_Updated.js - Updated with new column functionality
+// ExcelColumnRemover.js - Complete version with column reordering functionality
 import { useState } from 'react';
+import { ChevronUp, ChevronDown, GripVertical, RotateCcw } from 'lucide-react';
 
 // Import all the modular functions
 import { handleFileUpload, resetFileState } from './fileHandling.js';
@@ -13,7 +14,206 @@ import {
 import { calculateRowsRemoved } from './dateUtilities.js';
 import { exportWithXLSX, exportWithBordersUsingExcelJS, downloadXLSXFile } from './excelExport.js';
 import { validateProcessingRequirements, validateDataAvailability, isYellowColumn, generateProcessingSummary } from './validationUtilites.js';
+import { reorderColumns, validateColumnOrder } from './columnReordering.js';
 
+// Column Reordering Component (inline)
+const ColumnReorderingComponent = ({ 
+  headers, 
+  onColumnOrderChange, 
+  currentOrder = null 
+}) => {
+  const [columnOrder, setColumnOrder] = useState(
+    currentOrder || (headers ? headers.map((_, i) => i) : [])
+  );
+  const [draggedIndex, setDraggedIndex] = useState(null);
+
+  // Get ordered headers for display
+  const orderedHeaders = columnOrder.map(index => headers[index]).filter(Boolean);
+
+  const moveColumn = (fromIndex, toIndex) => {
+    if (fromIndex === toIndex) return;
+    
+    const newOrder = [...columnOrder];
+    const [movedItem] = newOrder.splice(fromIndex, 1);
+    newOrder.splice(toIndex, 0, movedItem);
+    
+    setColumnOrder(newOrder);
+    onColumnOrderChange(newOrder);
+  };
+
+  const moveUp = (currentIndex) => {
+    if (currentIndex > 0) {
+      moveColumn(currentIndex, currentIndex - 1);
+    }
+  };
+
+  const moveDown = (currentIndex) => {
+    if (currentIndex < columnOrder.length - 1) {
+      moveColumn(currentIndex, currentIndex + 1);
+    }
+  };
+
+  const resetOrder = () => {
+    const originalOrder = headers.map((_, i) => i);
+    setColumnOrder(originalOrder);
+    onColumnOrderChange(originalOrder);
+  };
+
+  const applyPredefinedOrder = (orderType) => {
+    let newOrder;
+    
+    switch (orderType) {
+      case 'alphabetical':
+        newOrder = headers
+          .map((header, index) => ({ header: header || '', index }))
+          .sort((a, b) => a.header.localeCompare(b.header))
+          .map(item => item.index);
+        break;
+      case 'yellowFirst':
+        const yellowColumns = ['Mobile', 'Payer', 'Claim ID', 'Submission Date', 'Xml FileName', 'Doctor', 'Card No', 'Services'];
+        const yellowIndices = [];
+        const otherIndices = [];
+        
+        headers.forEach((header, index) => {
+          const isYellow = yellowColumns.some(yellow => 
+            header && header.toLowerCase() === yellow.toLowerCase()
+          );
+          if (isYellow) {
+            yellowIndices.push(index);
+          } else {
+            otherIndices.push(index);
+          }
+        });
+        
+        newOrder = [...yellowIndices, ...otherIndices];
+        break;
+      default:
+        newOrder = headers.map((_, i) => i);
+    }
+    
+    setColumnOrder(newOrder);
+    onColumnOrderChange(newOrder);
+  };
+
+  const handleDragStart = (e, index) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e, dropIndex) => {
+    e.preventDefault();
+    if (draggedIndex !== null && draggedIndex !== dropIndex) {
+      moveColumn(draggedIndex, dropIndex);
+    }
+    setDraggedIndex(null);
+  };
+
+  if (!headers || headers.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-medium text-gray-900">
+          Column Order
+        </h3>
+        <div className="flex gap-2">
+          <button
+            onClick={() => applyPredefinedOrder('alphabetical')}
+            className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+          >
+            A-Z
+          </button>
+          <button
+            onClick={() => applyPredefinedOrder('yellowFirst')}
+            className="px-3 py-1 text-xs bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
+          >
+            Priority First
+          </button>
+          <button
+            onClick={resetOrder}
+            className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 flex items-center gap-1"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Reset
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-2 max-h-60 overflow-y-auto">
+        {orderedHeaders.map((header, displayIndex) => {
+          const originalIndex = columnOrder[displayIndex];
+          const isYellow = ['mobile', 'payer', 'claim id', 'submission date', 'xml filename', 'doctor', 'card no', 'services']
+            .includes((header || '').toLowerCase());
+
+          return (
+            <div
+              key={`${originalIndex}-${displayIndex}`}
+              draggable
+              onDragStart={(e) => handleDragStart(e, displayIndex)}
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(e, displayIndex)}
+              className={`flex items-center gap-3 p-3 bg-white rounded border transition-all cursor-move ${
+                draggedIndex === displayIndex ? 'opacity-50 scale-95' : 'hover:shadow-sm'
+              }`}
+            >
+              <GripVertical className="h-4 w-4 text-gray-400" />
+              
+              <div className="flex-1 min-w-0">
+                <span className={`text-sm font-medium truncate block ${
+                  isYellow ? 'text-yellow-600' : 'text-gray-700'
+                }`}>
+                  {header}
+                </span>
+                <span className="text-xs text-gray-500">
+                  Position {displayIndex + 1}
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() => moveUp(displayIndex)}
+                  disabled={displayIndex === 0}
+                  className={`p-1 rounded ${
+                    displayIndex === 0 
+                      ? 'text-gray-300 cursor-not-allowed' 
+                      : 'text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => moveDown(displayIndex)}
+                  disabled={displayIndex === orderedHeaders.length - 1}
+                  className={`p-1 rounded ${
+                    displayIndex === orderedHeaders.length - 1 
+                      ? 'text-gray-300 cursor-not-allowed' 
+                      : 'text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 text-sm text-gray-500">
+        <span className="font-medium">Tip:</span> Drag columns to reorder, or use the arrow buttons. 
+        Yellow columns are priority fields.
+      </div>
+    </div>
+  );
+};
+
+// Main ExcelColumnRemover Component
 export default function ExcelColumnRemover() {
   const [file, setFile] = useState(null);
   const [headers, setHeaders] = useState([]);
@@ -31,6 +231,10 @@ export default function ExcelColumnRemover() {
   const [addNewColumns, setAddNewColumns] = useState(true);
   const [newHeaders, setNewHeaders] = useState(getDefaultNewHeaders());
   
+  // New state for column reordering
+  const [columnOrder, setColumnOrder] = useState(null);
+  const [showColumnReordering, setShowColumnReordering] = useState(false);
+  
   // Handle file upload using modular function
   const onFileUpload = (e) => {
     const resetState = resetFileState();
@@ -47,6 +251,8 @@ export default function ExcelColumnRemover() {
     setJsonData(resetState.jsonData);
     setHeaderRowIndex(resetState.headerRowIndex);
     setError(resetState.error);
+    setColumnOrder(null); // Reset column order
+    setShowColumnReordering(false); // Hide reordering UI
     
     handleFileUpload(
       e,
@@ -91,6 +297,16 @@ export default function ExcelColumnRemover() {
     setSelectedMonths(newSelection);
   };
   
+  // Handle column order change
+  const handleColumnOrderChange = (newOrder) => {
+    setColumnOrder(newOrder);
+  };
+
+  // Toggle column reordering visibility
+  const toggleColumnReordering = () => {
+    setShowColumnReordering(!showColumnReordering);
+  };
+  
   // Process the file using modular functions
   const processFile = async () => {
     // Validate requirements
@@ -111,7 +327,7 @@ export default function ExcelColumnRemover() {
     setError('');
     
     try {
-      // Process data using modular function
+      // Process data using modular function with column reordering
       const processedDataArray = processExcelData(
         jsonData, 
         headerRowIndex, 
@@ -119,7 +335,8 @@ export default function ExcelColumnRemover() {
         selectedMonths, 
         monthCounts, 
         dateColumnIndex,
-        addNewColumns ? newHeaders : []
+        addNewColumns ? newHeaders : [],
+        columnOrder // Pass the column order
       );
       
       if (useBorders) {
@@ -186,8 +403,6 @@ export default function ExcelColumnRemover() {
                 className="absolute w-full h-full opacity-0 cursor-pointer"
               />
             </label>
-            
-            
           </div>
           
           {/* Styling option */}
@@ -325,28 +540,64 @@ export default function ExcelColumnRemover() {
                 ))}
               </div>
             </div>
-            
-            <div className="mt-5">
+          </div>
+        )}
+
+        {/* Column Reordering Section */}
+        {headers.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">
+                Column Order (Optional)
+              </h3>
               <button
-                onClick={processFile}
-                disabled={(selectedHeaders.length === 0 && selectedMonths.length === 0) || isLoading}
-                className={`w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                  (selectedHeaders.length === 0 && selectedMonths.length === 0) || isLoading
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'
-                }`}
+                onClick={toggleColumnReordering}
+                className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-md hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
-                {isLoading ? (
-                  <span className="flex items-center">
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Processing...
-                  </span>
-                ) : 'Process File'}
+                {showColumnReordering ? 'Hide' : 'Show'} Column Reordering
               </button>
             </div>
+            
+            {showColumnReordering && (
+              <ColumnReorderingComponent
+                headers={headers}
+                onColumnOrderChange={handleColumnOrderChange}
+                currentOrder={columnOrder}
+              />
+            )}
+            
+            {columnOrder && (
+              <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-200">
+                <p className="text-sm text-blue-800">
+                  <span className="font-medium">Column order set:</span> Columns will be reordered in the output file.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Process File Button */}
+        {headers.length > 0 && (
+          <div className="mb-8">
+            <button
+              onClick={processFile}
+              disabled={(selectedHeaders.length === 0 && selectedMonths.length === 0) || isLoading}
+              className={`w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                (selectedHeaders.length === 0 && selectedMonths.length === 0) || isLoading
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'
+              }`}
+            >
+              {isLoading ? (
+                <span className="flex items-center">
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Processing...
+                </span>
+              ) : 'Process File'}
+            </button>
           </div>
         )}
         
@@ -367,6 +618,9 @@ export default function ExcelColumnRemover() {
                   )}
                   {selectedMonths.length > 0 && (
                     <span> Removed {getRowsRemoved()} entries from: <span className="font-semibold">{selectedMonths.join(', ')}</span></span>
+                  )}
+                  {columnOrder && (
+                    <span> Applied <span className="font-semibold">custom column order</span>.</span>
                   )}
                   {useBorders && (
                     <span> Applied <span className="font-semibold">thick borders</span> to all cells.</span>

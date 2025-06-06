@@ -1,4 +1,4 @@
-// Modified dataProcessing.js - Updated with new column functionality
+// Modified dataProcessing.js - Updated with improved column reordering functionality
 
 import { getMonthFromDate } from './dateUtilities.js';
 
@@ -62,7 +62,65 @@ export const getDefaultNewHeaders = () => {
 };
 
 /**
- * Process Excel data by removing selected columns, filtering by months, and adding new columns
+ * Reorder columns in a data array
+ * @param {Array} data - Data array to reorder
+ * @param {Array} columnOrder - Array of column indices in the desired order
+ * @returns {Array} Data with columns reordered
+ */
+export const reorderColumns = (data, columnOrder) => {
+  if (!data || data.length === 0 || !columnOrder || columnOrder.length === 0) {
+    return data;
+  }
+  
+  return data.map(row => {
+    if (!row || !Array.isArray(row)) return row;
+    
+    // Create a new row with columns in the specified order
+    return columnOrder.map(index => {
+      // Return empty string for out-of-bounds indices
+      return index < row.length ? row[index] : '';
+    });
+  });
+};
+
+/**
+ * Validate a column order array
+ * @param {Array} headers - Header array 
+ * @param {Array} columnOrder - Column order array to validate
+ * @returns {Object} Validation result with isValid flag and message
+ */
+export const validateColumnOrder = (headers, columnOrder) => {
+  if (!headers || !columnOrder) {
+    return { isValid: false, message: 'Missing headers or column order' };
+  }
+  
+  // Ensure all indices are valid
+  for (const index of columnOrder) {
+    if (typeof index !== 'number' || index < 0 || index >= headers.length) {
+      return { 
+        isValid: false, 
+        message: `Invalid column index: ${index}. Must be between 0 and ${headers.length - 1}` 
+      };
+    }
+  }
+  
+  // Check for duplicate indices
+  const uniqueIndices = new Set(columnOrder);
+  if (uniqueIndices.size !== columnOrder.length) {
+    return { isValid: false, message: 'Column order contains duplicate indices' };
+  }
+  
+  // Check if all columns are included
+  if (columnOrder.length !== headers.length) {
+    // This is just a warning, not an error
+    console.warn(`Column order doesn't include all columns. Expected ${headers.length}, got ${columnOrder.length}`);
+  }
+  
+  return { isValid: true, message: 'Valid column order' };
+};
+
+/**
+ * Process Excel data by removing selected columns, filtering by months, adding new columns, and reordering
  * @param {Array} jsonData - Raw Excel data as array of arrays
  * @param {number} headerRowIndex - Index of the header row
  * @param {Array} selectedHeaders - Headers to remove
@@ -70,7 +128,8 @@ export const getDefaultNewHeaders = () => {
  * @param {Array} monthCounts - Month count data for mapping
  * @param {number} dateColumnIndex - Index of the date column
  * @param {Array} newHeaders - Headers for new columns to add (optional)
- * @returns {Array} Processed data with columns removed, rows filtered, and new columns added
+ * @param {Array} columnOrder - New column order indices (optional)
+ * @returns {Array} Processed data with columns removed, rows filtered, new columns added, and reordered
  */
 export const processExcelData = (
   jsonData, 
@@ -79,11 +138,14 @@ export const processExcelData = (
   selectedMonths, 
   monthCounts, 
   dateColumnIndex,
-  newHeaders = null
+  newHeaders = null,
+  columnOrder = null
 ) => {
   if (!jsonData) {
     throw new Error('No data available for processing');
   }
+  
+  console.log("Processing Excel data with column order:", columnOrder);
   
   // Use default headers if none provided
   const columnsToAdd = newHeaders || getDefaultNewHeaders();
@@ -135,8 +197,55 @@ export const processExcelData = (
     row ? row.filter((_, index) => !headerIndices.includes(index)) : []
   );
   
-  // Finally, add new columns
-  const finalData = addNewColumns(processedData, columnsToAdd);
+  // Add new columns
+  const dataWithNewColumns = addNewColumns(processedData, columnsToAdd);
+  
+  // Finally, reorder columns if specified
+  let finalData = dataWithNewColumns;
+  
+  if (columnOrder && columnOrder.length > 0) {
+    // Update column order to account for removed columns
+    // First, create a mapping from original indices to new indices
+    let indexMapping = {};
+    let newIndex = 0;
+    
+    for (let i = 0; i < headerRow.length; i++) {
+      if (!headerIndices.includes(i)) {
+        indexMapping[i] = newIndex++;
+      }
+    }
+    
+    // Now add the indices for new columns
+    for (let i = 0; i < columnsToAdd.length; i++) {
+      indexMapping[headerRow.length + i] = newIndex++;
+    }
+    
+    // Convert the column order to account for removed columns
+    const adjustedColumnOrder = columnOrder
+      .filter(index => indexMapping[index] !== undefined)
+      .map(index => indexMapping[index]);
+    
+    // Add any missing indices to the end
+    const includedIndices = new Set(adjustedColumnOrder);
+    for (let i = 0; i < dataWithNewColumns[0].length; i++) {
+      if (!includedIndices.has(i)) {
+        adjustedColumnOrder.push(i);
+      }
+    }
+    
+    console.log("Adjusted column order:", adjustedColumnOrder);
+    
+    // Validate the new column order
+    const validation = validateColumnOrder(dataWithNewColumns[0], adjustedColumnOrder);
+    
+    if (validation.isValid) {
+      // Apply the reordering
+      finalData = reorderColumns(dataWithNewColumns, adjustedColumnOrder);
+      console.log("Column reordering applied successfully");
+    } else {
+      console.warn("Invalid column order, using original order:", validation.message);
+    }
+  }
   
   return finalData;
 };

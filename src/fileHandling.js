@@ -35,7 +35,7 @@ export const parseExcelFile = (file) => {
         
         // Convert to JSON
         const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-        
+        console.log('Parsed JSON Data:', jsonData);
         if (jsonData.length === 0) {
           reject(new Error('The file appears to be empty'));
           return;

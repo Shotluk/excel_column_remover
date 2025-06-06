@@ -1,47 +1,154 @@
-// excelExport.js - Updated functions for exporting Excel files with new columns support
+// excelExport.js - Updated with ID column handling to prevent unwanted numeric formatting
 
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 
 /**
- * Export data using XLSX library (basic export without borders)
+ * Identify ID columns by header names to prevent numeric formatting
+ * @param {Array} headerRow - First row containing headers
+ * @returns {Array} Array of column indices that should be treated as IDs/text
+ */
+const identifyIdColumns = (headerRow) => {
+  const idColumnIndices = [];
+  
+  if (headerRow && headerRow.length > 0) {
+    headerRow.forEach((header, index) => {
+      if (header && typeof header === 'string') {
+        // Common patterns for ID columns - look for keywords or patterns
+        const idPatterns = [
+          /id$/i,          // Ends with 'id' (case insensitive)
+          /^id/i,          // Starts with 'id'
+          /no$/i,          // Ends with 'no'
+          /number$/i,      // Ends with 'number'
+          /code$/i,        // Ends with 'code'
+          /^bill/i,        // Starts with 'bill'
+          /^file/i,        // Starts with 'file'
+          /^card/i,        // Starts with 'card'
+          /^claim/i,       // Starts with 'claim'
+          /^ref/i,         // Starts with 'ref'
+          /^account/i,     // Starts with 'account'
+          /^customer/i,    // Starts with 'customer'
+          /^policy/i,      // Starts with 'policy'
+          /^order/i,       // Starts with 'order'
+          /^invoice/i,     // Starts with 'invoice'
+        ];
+        
+        // Check if header matches any ID patterns
+        if (idPatterns.some(pattern => pattern.test(header))) {
+          idColumnIndices.push(index);
+        }
+      }
+    });
+  }
+  
+  console.log("Identified ID columns at indices:", idColumnIndices);
+  return idColumnIndices;
+};
+
+/**
+ * Calculate appropriate column widths based on content
+ * @param {Array} data - 2D array of data 
+ * @param {number} maxSampleRows - Maximum number of rows to check (for performance)
+ * @returns {Array} Array of column widths
+ */
+const calculateColumnWidths = (data, maxSampleRows = 100) => {
+  if (!data || data.length === 0 || !data[0]) return [];
+  
+  const widths = Array(data[0].length).fill(10); // Default minimum width
+  const headerRow = data[0];
+  
+  // Factor to convert character count to Excel column width
+  // Excel column width is based on the number of characters in the default font
+  const charWidthFactor = 1.2;
+  const minWidth = 8;
+  const maxWidth = 50;
+  const padding = 2; // Extra space for padding
+  
+  // Start with headers
+  headerRow.forEach((header, colIndex) => {
+    if (header) {
+      const headerLength = String(header).length;
+      widths[colIndex] = Math.max(widths[colIndex], 
+        Math.min(maxWidth, Math.ceil(headerLength * charWidthFactor) + padding));
+    }
+  });
+  
+  // Check data rows (limit the number of rows to check for performance)
+  const rowsToCheck = Math.min(maxSampleRows, data.length);
+  
+  for (let rowIndex = 1; rowIndex < rowsToCheck; rowIndex++) {
+    const row = data[rowIndex];
+    if (!row) continue;
+    
+    row.forEach((cell, colIndex) => {
+      if (cell !== null && cell !== undefined) {
+        let cellLength;
+        
+        // Handle different data types
+        if (typeof cell === 'number') {
+          // For numbers, estimate the display width
+          cellLength = String(cell).length;
+          
+          // If it's a floating point number, add space for decimal places
+          if (cell % 1 !== 0) {
+            cellLength = Math.max(cellLength, String(cell.toFixed(2)).length);
+          }
+        } else if (cell instanceof Date) {
+          // For dates, estimate a fixed width (e.g., "DD/MM/YYYY" format)
+          cellLength = 12; 
+        } else {
+          // For strings and other types
+          cellLength = String(cell).length;
+        }
+        
+        // Update column width if this cell is wider
+        widths[colIndex] = Math.max(widths[colIndex], 
+          Math.min(maxWidth, Math.ceil(cellLength * charWidthFactor) + padding));
+      }
+    });
+  }
+  
+  return widths;
+};
+
+/**
+ * Export data using XLSX library with auto-width columns
  * @param {Array} processedData - Processed data array
  * @returns {ArrayBuffer} Excel file as binary data
  */
 export const exportWithXLSX = (processedData) => {
   // Create a new workbook
   const newWorkbook = XLSX.utils.book_new();
+  
+  // Identify ID columns to format as text
+  const headerRow = processedData[0] || [];
+  const idColumns = identifyIdColumns(headerRow);
+  
+  // Convert to worksheet with specific formatting
   const newSheet = XLSX.utils.aoa_to_sheet(processedData);
   
-  // Set column widths to better fit content
-  const maxWidth = 100; // Maximum width in Excel units
-  const defaultWidth = 12; // Default column width
-  
-  // Initialize column widths object
-  if (!newSheet['!cols']) newSheet['!cols'] = [];
-  
-  // If we have data, adjust column widths based on content
-  if (processedData.length > 0) {
-    // For each column
-    for (let colIdx = 0; colIdx < processedData[0].length; colIdx++) {
-      // Check header length first
-      let maxLength = processedData[0][colIdx] ? 
-        String(processedData[0][colIdx]).length : 0;
+  // Apply text format to ID columns
+  idColumns.forEach(colIndex => {
+    const colLetter = XLSX.utils.encode_col(colIndex);
+    
+    // Format all cells in this column as text
+    for (let rowIndex = 1; rowIndex < processedData.length; rowIndex++) {
+      const cellRef = colLetter + (rowIndex + 1); // +1 because XLSX is 1-indexed for rows
       
-      // Check first few data rows (limit to prevent performance issues)
-      const rowsToCheck = Math.min(20, processedData.length);
-      for (let rowIdx = 1; rowIdx < rowsToCheck; rowIdx++) {
-        if (processedData[rowIdx] && processedData[rowIdx][colIdx]) {
-          const cellLength = String(processedData[rowIdx][colIdx]).length;
-          maxLength = Math.max(maxLength, cellLength);
+      if (newSheet[cellRef]) {
+        // Ensure cell has a format object
+        if (!newSheet[cellRef].z) {
+          newSheet[cellRef].z = '@'; // '@' is the Excel format code for Text
         }
       }
-      
-      // Calculate width: roughly 0.8 characters per Excel width unit, plus some padding
-      const calculatedWidth = Math.min(maxWidth, Math.max(defaultWidth, Math.ceil(maxLength * 0.8) + 2));
-      newSheet['!cols'][colIdx] = { width: calculatedWidth };
     }
-  }
+  });
+  
+  // Calculate optimal column widths
+  const columnWidths = calculateColumnWidths(processedData);
+  
+  // Set column widths
+  newSheet['!cols'] = columnWidths.map(width => ({ width }));
   
   XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Sheet1');
   
@@ -55,61 +162,88 @@ export const exportWithXLSX = (processedData) => {
 };
 
 /**
- * Identify table rows vs metadata/footer rows
- * @param {Array} data - Excel data array
- * @returns {Array} Array of row indices that are part of the main table
+ * Calculate optimal column width for ExcelJS
+ * This is more accurate as it can use the actual font metrics
+ * @param {ExcelJS.Worksheet} worksheet - The worksheet 
+ * @param {Array} data - The data as 2D array
  */
-const identifyTableRows = (data) => {
-  const tableRowIndices = [];
-  const headerRow = data[0];
-  const headerCellCount = headerRow ? headerRow.length : 0;
+const applyOptimalColumnWidths = (worksheet, data) => {
+  const columnWidths = calculateColumnWidths(data);
   
-  // Consider header row as part of the table
-  tableRowIndices.push(0);
-  
-  // Check each data row
-  for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
-    const row = data[rowIndex];
-    if (!row) continue;
-    
-    // Check if this looks like a data row (has similar structure to header)
-    // Criteria: Has at least half as many cells as the header row
-    // and doesn't contain typical footer text like "Page"
-    const cellCount = row.filter(cell => cell !== undefined && cell !== null && cell !== '').length;
-    const isLikelyFooter = row.some(cell => 
-      cell && typeof cell === 'string' && 
-      (cell.includes('Page') || cell.includes('of ') || 
-       cell.match(/^\d+\s*of\s*\d+$/i) || // "1 of 5" pattern
-       cell.match(/^-?\d+$/) && parseInt(cell) < 100) // Just a small number by itself
-    );
-    
-    if (cellCount >= headerCellCount / 2 && !isLikelyFooter) {
-      tableRowIndices.push(rowIndex);
-    }
-  }
-  
-  console.log("Identified table rows:", tableRowIndices);
-  return tableRowIndices;
+  // Apply calculated widths to worksheet columns
+  columnWidths.forEach((width, i) => {
+    const col = worksheet.getColumn(i + 1); // ExcelJS uses 1-based indexing
+    col.width = width;
+  });
 };
 
-
 /**
- * Identify date columns by header names
- * @param {Array} headerRow - First row containing headers
+ * Identify date columns by header names and content analysis
+ * @param {Array} data - Full data array with header row
  * @returns {Array} Array of column indices that contain dates
  */
-const identifyDateColumns = (headerRow) => {
-  const dateColumnIndices = [];
+const identifyDateColumns = (data) => {
+  if (!data || data.length < 2) return [];
   
-  if (headerRow && headerRow.length > 0) {
-    headerRow.forEach((header, index) => {
-      if (header && typeof header === 'string' && 
-          (header.toLowerCase().includes('date') || 
-           header.toLowerCase().includes('time') ||
-           header.toLowerCase().includes('submission'))) {
-        dateColumnIndices.push(index);
+  const dateColumnIndices = [];
+  const headerRow = data[0];
+  
+  // First pass: check headers for date-related keywords
+  headerRow.forEach((header, index) => {
+    if (header && typeof header === 'string' && 
+        (header.toLowerCase().includes('date') || 
+         header.toLowerCase().includes('time') ||
+         header.toLowerCase().includes('submission'))) {
+      dateColumnIndices.push(index);
+    }
+  });
+  
+  // Second pass: analyze content for date patterns
+  // We'll only check a few rows for performance
+  const rowsToCheck = Math.min(10, data.length - 1);
+  
+  for (let colIndex = 0; colIndex < headerRow.length; colIndex++) {
+    // Skip already identified date columns
+    if (dateColumnIndices.includes(colIndex)) continue;
+    
+    let datePatternMatches = 0;
+    let rowsWithContent = 0;
+    
+    for (let rowIndex = 1; rowIndex <= rowsToCheck; rowIndex++) {
+      const row = data[rowIndex];
+      if (!row || !row[colIndex]) continue;
+      
+      const cellValue = row[colIndex];
+      rowsWithContent++;
+      
+      // Check if it's already a date object
+      if (cellValue instanceof Date) {
+        datePatternMatches++;
+        continue;
       }
-    });
+      
+      // Check for common date patterns in strings
+      if (typeof cellValue === 'string') {
+        // Various date formats: DD/MM/YYYY, MM-DD-YYYY, YYYY-MM-DD, etc.
+        const datePattern = /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})|(\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/;
+        if (datePattern.test(cellValue)) {
+          datePatternMatches++;
+        }
+      }
+      
+      // Check for Excel date serial numbers (numbers within a certain range)
+      if (typeof cellValue === 'number') {
+        // Excel date serial numbers typically fall within this range
+        if (cellValue > 25000 && cellValue < 50000) {
+          datePatternMatches++;
+        }
+      }
+    }
+    
+    // If most of the cells in this column match date patterns, consider it a date column
+    if (rowsWithContent > 0 && datePatternMatches / rowsWithContent > 0.6) {
+      dateColumnIndices.push(colIndex);
+    }
   }
   
   console.log("Identified date columns at indices:", dateColumnIndices);
@@ -117,24 +251,76 @@ const identifyDateColumns = (headerRow) => {
 };
 
 /**
- * Identify amount columns by header names
- * @param {Array} headerRow - First row containing headers
+ * Identify numeric/amount columns by header names and content analysis
+ * @param {Array} data - Full data array with header row
+ * @param {Array} idColumns - Array of column indices that are ID columns (to exclude)
  * @returns {Array} Array of column indices that contain amounts
  */
-const identifyAmountColumns = (headerRow) => {
-  const amountColumnIndices = [];
+const identifyAmountColumns = (data, idColumns = []) => {
+  if (!data || data.length < 2) return [];
   
-  if (headerRow && headerRow.length > 0) {
-    headerRow.forEach((header, index) => {
-      if (header && typeof header === 'string' && 
-          (header.toLowerCase().includes('amount') || 
-           header.toLowerCase().includes('amt') ||
-           header.toLowerCase().includes('price') ||
-           header.toLowerCase().includes('cost') ||
-           header.toLowerCase().includes('recieved'))) {
-        amountColumnIndices.push(index);
+  const amountColumnIndices = [];
+  const headerRow = data[0];
+  
+  // First pass: check headers for amount-related keywords
+  headerRow.forEach((header, index) => {
+    // Skip ID columns - they should never be treated as amount columns
+    if (idColumns.includes(index)) return;
+    
+    if (header && typeof header === 'string' && 
+        (header.toLowerCase().includes('amount') || 
+         header.toLowerCase().includes('amt') ||
+         header.toLowerCase().includes('price') ||
+         header.toLowerCase().includes('cost') ||
+         header.toLowerCase().includes('fee') ||
+         header.toLowerCase().includes('total') ||
+         header.toLowerCase().includes('sum') ||
+         header.toLowerCase().includes('recieved'))) {
+      amountColumnIndices.push(index);
+    }
+  });
+  
+  // Second pass: analyze content for numeric patterns
+  // We'll only check a few rows for performance
+  const rowsToCheck = Math.min(10, data.length - 1);
+  
+  for (let colIndex = 0; colIndex < headerRow.length; colIndex++) {
+    // Skip already identified amount columns or ID columns
+    if (amountColumnIndices.includes(colIndex) || idColumns.includes(colIndex)) continue;
+    
+    let numericValueCount = 0;
+    let rowsWithContent = 0;
+    
+    for (let rowIndex = 1; rowIndex <= rowsToCheck; rowIndex++) {
+      const row = data[rowIndex];
+      if (!row || row[colIndex] === undefined || row[colIndex] === null) continue;
+      
+      const cellValue = row[colIndex];
+      rowsWithContent++;
+      
+      // Check if it's a number
+      if (typeof cellValue === 'number') {
+        numericValueCount++;
+        continue;
       }
-    });
+      
+      // Check for currency/numeric patterns in strings
+      if (typeof cellValue === 'string') {
+        // Currency pattern: optional currency symbol, digits, optional decimal point, more digits
+        const currencyPattern = /^[$€£¥]?\s*\d+(\.\d+)?$/;
+        // Numeric pattern with commas: 1,234.56
+        const numericPattern = /^-?\s*\d{1,3}(,\d{3})*(\.\d+)?$/;
+        
+        if (currencyPattern.test(cellValue) || numericPattern.test(cellValue)) {
+          numericValueCount++;
+        }
+      }
+    }
+    
+    // If most of the cells in this column are numeric, consider it an amount column
+    if (rowsWithContent > 0 && numericValueCount / rowsWithContent > 0.6) {
+      amountColumnIndices.push(colIndex);
+    }
   }
   
   console.log("Identified amount columns at indices:", amountColumnIndices);
@@ -142,111 +328,156 @@ const identifyAmountColumns = (headerRow) => {
 };
 
 /**
- * Export data using ExcelJS library (with borders and advanced formatting)
+ * Export data using ExcelJS library with smart formatting and auto-width columns
  * @param {Array} data - Data array to export
  * @param {string} fileName - Original filename for download naming
  * @param {Array} selectedMonths - Selected months for filename
  * @returns {Promise<void>} Downloads the file directly
  */
-// Updated exportWithBordersUsingExcelJS function with fixed border application logic
-
 export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMonths = []) => {
   try {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Sheet1');
     
-    // Identify date columns and amount columns
-    const dateColumnIndices = identifyDateColumns(data[0]);
-    const amountColumnIndices = identifyAmountColumns(data[0]);
+    // Identify special columns using our enhanced detection
+    const headerRow = data[0] || [];
+    const idColumnIndices = identifyIdColumns(headerRow);
+    const dateColumnIndices = identifyDateColumns(data);
+    const amountColumnIndices = identifyAmountColumns(data, idColumnIndices);
     
-    // Add header row
-    if (data.length > 0 && data[0]) {
-      const headerRow = worksheet.addRow(data[0]);
+    // Add all rows first
+    data.forEach((row, rowIndex) => {
+      if (!row) return;
       
-      // Style header row
-      headerRow.eachCell((cell) => {
-        cell.font = { bold: true };
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFE0E0E0' }
-        };
-      });
-    }
-    
-    // Add data rows with special handling for date and amount columns
-    for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
-      const row = data[rowIndex];
-      if (!row) continue;
+      const excelRow = worksheet.addRow(row);
       
-      const newRow = worksheet.addRow(row);
-      
-      // Apply special formatting to date columns
-      dateColumnIndices.forEach(colIndex => {
-        if (colIndex < row.length) {
-          const cell = newRow.getCell(colIndex + 1); // +1 because ExcelJS is 1-indexed
-          const value = row[colIndex];
-          
-          // Check if it's a numeric string that could be an Excel date serial
-          if (value && !isNaN(value)) {
-            const numValue = parseFloat(value);
-            // Excel date serial numbers are typically in this range
-            if (numValue > 40000 && numValue < 50000) {
-              // Convert Excel serial number to JavaScript Date
-              const excelEpoch = new Date(1899, 11, 30); // Excel's epoch
-              const millisecondsPerDay = 24 * 60 * 60 * 1000;
-              const dateObj = new Date(excelEpoch.getTime() + numValue * millisecondsPerDay);
+      // Special formatting for header row
+      if (rowIndex === 0) {
+        excelRow.eachCell((cell) => {
+          cell.font = { bold: true };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE0E0E0' }
+          };
+          cell.alignment = { 
+            vertical: 'middle', 
+            horizontal: 'center',
+            wrapText: true
+          };
+        });
+      } 
+      // Special formatting for data rows
+      else {
+        // Format ID columns as text to prevent numeric formatting
+        idColumnIndices.forEach(colIndex => {
+          if (colIndex < row.length) {
+            const cell = excelRow.getCell(colIndex + 1);
+            const value = row[colIndex];
+            
+            // Preserve the original value but enforce text format
+            if (value !== null && value !== undefined) {
+              // For numbers, convert to string to preserve exact value
+              if (typeof value === 'number') {
+                cell.value = String(value);
+              } else {
+                cell.value = value;
+              }
               
-              // Store as Date object but with specific formatting
-              cell.value = dateObj;
-              cell.numFmt = 'dd/mm/yyyy h:mm:ss AM/PM';
+              // Explicitly set format to text
+              cell.numFmt = '@';
             }
           }
-        }
-      });
-      
-      // Apply formatting to amount columns
-      amountColumnIndices.forEach(colIndex => {
-        if (colIndex < row.length) {
-          const cell = newRow.getCell(colIndex + 1);
-          // Apply number formatting
-          cell.numFmt = '#,##0.00';
-        }
-      });
-    }
+        });
+        
+        // Apply special formatting to date columns
+        dateColumnIndices.forEach(colIndex => {
+          if (colIndex < row.length && !idColumnIndices.includes(colIndex)) {
+            const cell = excelRow.getCell(colIndex + 1);
+            const value = row[colIndex];
+            
+            // Handle various date formats
+            if (value instanceof Date) {
+              // Already a date object
+              cell.value = value;
+              cell.numFmt = 'dd/mm/yyyy';
+            } else if (typeof value === 'number' && value > 25000 && value < 50000) {
+              // Excel date serial number
+              const excelEpoch = new Date(1899, 11, 30);
+              const millisecondsPerDay = 24 * 60 * 60 * 1000;
+              const dateObj = new Date(excelEpoch.getTime() + value * millisecondsPerDay);
+              
+              cell.value = dateObj;
+              cell.numFmt = 'dd/mm/yyyy';
+            } else if (typeof value === 'string') {
+              // Try to parse date strings
+              const dateFormats = [
+                // DD/MM/YYYY
+                { regex: /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/, fn: (m) => new Date(parseInt(m[3]), parseInt(m[2])-1, parseInt(m[1])) },
+                // MM/DD/YYYY
+                { regex: /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/, fn: (m) => new Date(parseInt(m[3]), parseInt(m[1])-1, parseInt(m[2])) },
+                // YYYY-MM-DD
+                { regex: /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/, fn: (m) => new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3])) }
+              ];
+              
+              for (const format of dateFormats) {
+                const match = value.match(format.regex);
+                if (match) {
+                  try {
+                    const dateObj = format.fn(match);
+                    if (!isNaN(dateObj.getTime())) {
+                      cell.value = dateObj;
+                      cell.numFmt = 'dd/mm/yyyy';
+                      break;
+                    }
+                  } catch (e) {
+                    // If date parsing fails, keep as string
+                  }
+                }
+              }
+            }
+          }
+        });
+        
+        // Apply formatting to amount columns
+        amountColumnIndices.forEach(colIndex => {
+          if (colIndex < row.length && !idColumnIndices.includes(colIndex)) {
+            const cell = excelRow.getCell(colIndex + 1);
+            const value = row[colIndex];
+            
+            // Handle various number formats
+            if (typeof value === 'number') {
+              cell.numFmt = '#,##0.00';
+            } else if (typeof value === 'string') {
+              // Try to parse currency strings
+              const currencyMatch = value.match(/^[$€£¥]?\s*(\d+(?:\.\d+)?)$/);
+              if (currencyMatch) {
+                try {
+                  cell.value = parseFloat(currencyMatch[1]);
+                  cell.numFmt = '#,##0.00';
+                } catch (e) {
+                  // If parsing fails, keep as string
+                }
+              }
+            }
+          }
+        });
+      }
+    });
     
-    // Apply borders to ALL cells - removing the conditional check that was causing issues
+    // Apply auto-fit column widths based on content
+    applyOptimalColumnWidths(worksheet, data);
+    
+    // Apply borders to ALL cells
     worksheet.eachRow((row) => {
       row.eachCell((cell) => {
         cell.border = {
           top: { style: 'thin', color: { argb: 'FF000000' } },
           bottom: { style: 'thin', color: { argb: 'FF000000' } },
           left: { style: 'thin', color: { argb: 'FF000000' } },
-          right: { style: 'thin', color: { argb: 'FF000000' } },
+          right: { style: 'thin', color: { argb: 'FF000000' } }
         };
       });
-    });
-    
-    // Set column widths automatically
-    worksheet.columns.forEach((column, i) => {
-      
-      // For date columns, set wider
-      if (dateColumnIndices.includes(i)) {
-        column.width = 22; // Wide enough for date + time format
-      } 
-      // For amount columns, set standard width
-      else if (amountColumnIndices.includes(i)) {
-        column.width = 15;
-      }
-      // For other columns, calculate based on content
-      else {
-        let maxLength = 15;
-        // column.eachCell({ includeEmpty: true }, (cell) => {
-        //   const val = cell.value ? cell.value.toString() : '';
-        //   maxLength = Math.max(maxLength, val.length);
-        // });
-        column.width = maxLength + 2;
-      }
     });
     
     // Create and download the file
