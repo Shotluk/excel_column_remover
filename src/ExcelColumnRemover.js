@@ -1,6 +1,5 @@
-// ExcelColumnRemover.js - Complete version with imported column reordering component
-import React, { useState } from 'react';
-
+// ExcelColumnRemover.js - Complete version with separated column addition functionality
+import React, { useState, useCallback } from 'react';
 // Import all the modular functions
 import { handleFileUpload, resetFileState } from './fileHandling.js';
 import { 
@@ -31,8 +30,11 @@ export default function ExcelColumnRemover() {
   const [jsonData, setJsonData] = useState(null);
   const [useBorders, setUseBorders] = useState(true);
   const [headerRowIndex, setHeaderRowIndex] = useState(0);
-  const [addNewColumns] = useState(true);
-  const [newHeaders] = useState(getDefaultNewHeaders());
+  
+  // Separate the two types of column additions
+  const [addDefaultColumns] = useState(true); // For the 4 default columns
+  const [defaultNewHeaders] = useState(getDefaultNewHeaders()); // The 4 default columns
+  const [addedCustomColumns, setAddedCustomColumns] = useState([]); // For user-added columns
   
   // State for column reordering
   const [columnOrder, setColumnOrder] = useState(null);
@@ -55,6 +57,7 @@ export default function ExcelColumnRemover() {
     setError(resetState.error);
     setColumnOrder(null); // Reset column order
     setShowColumnReordering(false); // Hide reordering UI
+    setAddedCustomColumns([]); // Reset custom columns
     
     handleFileUpload(
       e,
@@ -80,6 +83,7 @@ export default function ExcelColumnRemover() {
     );
   };
   
+  
   // Handle header toggle using modular function
   const handleToggleHeader = (header) => {
     const newSelection = toggleHeaderSelection(header, selectedHeaders);
@@ -92,14 +96,25 @@ export default function ExcelColumnRemover() {
     setSelectedMonths(newSelection);
   };
   
-  // Handle column order change
-  const handleColumnOrderChange = (newOrder) => {
+  // Handle column order change - wrap in useCallback
+  const handleColumnOrderChange = useCallback((newOrder) => {
     setColumnOrder(newOrder);
-  };
+  }, []);
 
   // Toggle column reordering visibility
   const toggleColumnReordering = () => {
     setShowColumnReordering(!showColumnReordering);
+  };
+
+  // Handler for custom column additions from the reordering component
+  const handleAddCustomColumn = (columnName, removedColumnName, action) => {
+    if (action === 'remove') {
+      // Remove custom column
+      setAddedCustomColumns(prev => prev.filter(col => col !== removedColumnName));
+    } else if (columnName) {
+      // Add custom column
+      setAddedCustomColumns(prev => [...prev, columnName]);
+    }
   };
   
   // Process the file using modular functions
@@ -122,17 +137,31 @@ export default function ExcelColumnRemover() {
     setError('');
     
     try {
+      // Combine both types of new columns
+      const allNewColumns = [
+        ...(addDefaultColumns ? defaultNewHeaders : []),
+        ...addedCustomColumns
+      ];
+
+      console.log("Processing with columns:", {
+        defaultColumns: addDefaultColumns ? defaultNewHeaders : [],
+        customColumns: addedCustomColumns,
+        allNewColumns
+      });
+
       // Process data using modular function with column reordering
       const processedDataArray = processExcelData(
-        jsonData, 
-        headerRowIndex, 
-        selectedHeaders, 
-        selectedMonths, 
-        monthCounts, 
-        dateColumnIndex,
-        addNewColumns ? newHeaders : [],
-        columnOrder // Pass the column order
-      );
+      jsonData, 
+      headerRowIndex, 
+      selectedHeaders, 
+      selectedMonths, 
+      monthCounts, 
+      dateColumnIndex,
+      allNewColumns, // Pass combined new columns
+      columnOrder, // Pass the column order
+      headers, // Pass original headers
+      addedCustomColumns // Pass custom added columns
+    );
       
       if (useBorders) {
         // Use ExcelJS for styling with borders
@@ -358,13 +387,16 @@ export default function ExcelColumnRemover() {
                 headers={headers}
                 onColumnOrderChange={handleColumnOrderChange}
                 currentOrder={columnOrder}
+                onAddColumn={handleAddCustomColumn} // Use the custom column handler
+                addedColumns={addedCustomColumns} // Pass the custom columns
               />
             )}
             
-            {columnOrder && (
+            {(columnOrder || addedCustomColumns.length > 0) && (
               <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-200">
                 <p className="text-sm text-blue-800">
-                  <span className="font-medium">Column order set:</span> Columns will be reordered in the output file.
+                  {columnOrder && <span><span className="font-medium">Column order set:</span> Columns will be reordered in the output file. </span>}
+                  {addedCustomColumns.length > 0 && <span><span className="font-medium">Custom columns added:</span> {addedCustomColumns.join(', ')}.</span>}
                 </p>
               </div>
             )}
@@ -410,35 +442,38 @@ export default function ExcelColumnRemover() {
                   File processed successfully!
                   {selectedHeaders.length > 0 && (
                     <span> Removed columns: <span className="font-semibold">{selectedHeaders.join(', ')}</span></span>
-                 )}
-                 {selectedMonths.length > 0 && (
-                   <span> Removed {getRowsRemoved()} entries from: <span className="font-semibold">{selectedMonths.join(', ')}</span></span>
-                 )}
-                 {columnOrder && (
-                   <span> Applied <span className="font-semibold">custom column order</span>.</span>
-                 )}
-                 {useBorders && (
-                   <span> Applied <span className="font-semibold">thick borders</span> to all cells.</span>
-                 )}
-               </p>
-             </div>
-           </div>
-           {!useBorders && (
-             <div className="mt-4">
-               <button
-                 onClick={downloadFile}
-                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-               >
-                 <svg className="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                 </svg>
-                 Download Modified File
-               </button>
-             </div>
-           )}
-         </div>
-       )}
-     </div>
-   </div>
- );
+                  )}
+                  {selectedMonths.length > 0 && (
+                    <span> Removed {getRowsRemoved()} entries from: <span className="font-semibold">{selectedMonths.join(', ')}</span></span>
+                  )}
+                  {columnOrder && (
+                    <span> Applied <span className="font-semibold">custom column order</span>.</span>
+                  )}
+                  {addedCustomColumns.length > 0 && (
+                    <span> Added <span className="font-semibold">{addedCustomColumns.length} custom column(s)</span>.</span>
+                  )}
+                  {useBorders && (
+                    <span> Applied <span className="font-semibold">thick borders</span> to all cells.</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            {!useBorders && (
+              <div className="mt-4">
+                <button
+                  onClick={downloadFile}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                >
+                  <svg className="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download Modified File
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

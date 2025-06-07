@@ -1,4 +1,4 @@
-// Modified dataProcessing.js - Updated with improved column reordering functionality
+// Modified dataProcessing.js - Fixed column reordering functionality
 
 import { getMonthFromDate } from './dateUtilities.js';
 
@@ -127,8 +127,10 @@ export const validateColumnOrder = (headers, columnOrder) => {
  * @param {Array} selectedMonths - Months to filter out
  * @param {Array} monthCounts - Month count data for mapping
  * @param {number} dateColumnIndex - Index of the date column
- * @param {Array} newHeaders - Headers for new columns to add (optional)
- * @param {Array} columnOrder - New column order indices (optional)
+ * @param {Array} newHeaders - Headers for new columns to add (includes both default and custom)
+ * @param {Array} columnOrder - New column order indices (optional) - based on combined headers
+ * @param {Array} originalHeaders - Original headers before adding new columns
+ * @param {Array} addedColumns - Custom added columns
  * @returns {Array} Processed data with columns removed, rows filtered, new columns added, and reordered
  */
 export const processExcelData = (
@@ -139,16 +141,21 @@ export const processExcelData = (
   monthCounts, 
   dateColumnIndex,
   newHeaders = null,
-  columnOrder = null
+  columnOrder = null,
+  originalHeaders = null,
+  addedColumns = []
 ) => {
   if (!jsonData) {
     throw new Error('No data available for processing');
   }
   
   console.log("Processing Excel data with column order:", columnOrder);
+  console.log("Adding new columns:", newHeaders);
+  console.log("Original headers:", originalHeaders);
+  console.log("Added columns:", addedColumns);
   
-  // Use default headers if none provided
-  const columnsToAdd = newHeaders || getDefaultNewHeaders();
+  // Use provided headers (which now includes both default and custom columns) or empty array
+  const columnsToAdd = newHeaders || [];
   
   // Create adjusted data with the correct header row
   const headerRow = jsonData[headerRowIndex];
@@ -156,11 +163,6 @@ export const processExcelData = (
     headerRow,
     ...jsonData.slice(headerRowIndex + 1)
   ];
-  
-  // Get indices of headers to remove
-  const headerIndices = selectedHeaders.map(header => 
-    headerRow.findIndex(h => h === header)
-  ).filter(index => index !== -1);
   
   // Get month codes to filter out
   const monthCodesToRemove = selectedMonths.map(month => {
@@ -192,62 +194,77 @@ export const processExcelData = (
     }
   }
   
-  // Then remove selected columns
-  const processedData = filteredData.map(row => 
-    row ? row.filter((_, index) => !headerIndices.includes(index)) : []
-  );
+  // Add new columns (both default and custom) BEFORE removing columns
+  const dataWithNewColumns = addNewColumns(filteredData, columnsToAdd);
   
-  // Add new columns
-  const dataWithNewColumns = addNewColumns(processedData, columnsToAdd);
+  // Apply column reordering BEFORE removing columns
+  let reorderedData = dataWithNewColumns;
   
-  // Finally, reorder columns if specified
-  let finalData = dataWithNewColumns;
-  
-  if (columnOrder && columnOrder.length > 0) {
-    // Update column order to account for removed columns
-    // First, create a mapping from original indices to new indices
-    let indexMapping = {};
-    let newIndex = 0;
+  if (columnOrder && columnOrder.length > 0 && originalHeaders && addedColumns) {
+    console.log("Applying column reordering...");
     
-    for (let i = 0; i < headerRow.length; i++) {
-      if (!headerIndices.includes(i)) {
-        indexMapping[i] = newIndex++;
+    // Create the combined headers list (same as in the component)
+    const allCombinedHeaders = [...originalHeaders, ...addedColumns];
+    
+    // Create headers after adding new columns (original + new columns)
+    const headersAfterAddition = [...headerRow, ...columnsToAdd];
+    
+    console.log("All combined headers (from component):", allCombinedHeaders);
+    console.log("Headers after addition:", headersAfterAddition);
+    console.log("Column order from component:", columnOrder);
+    
+    // Create a mapping from component column order to actual data columns
+    const finalColumnOrder = [];
+    
+    columnOrder.forEach(componentIndex => {
+      const headerName = allCombinedHeaders[componentIndex];
+      console.log(`Looking for header: ${headerName} (component index: ${componentIndex})`);
+      
+      // Find this header in the headers after addition
+      const actualIndex = headersAfterAddition.findIndex(header => header === headerName);
+      
+      if (actualIndex !== -1) {
+        finalColumnOrder.push(actualIndex);
+        console.log(`Found ${headerName} at actual index: ${actualIndex}`);
+      } else {
+        console.warn(`Header ${headerName} not found in final headers`);
       }
-    }
+    });
     
-    // Now add the indices for new columns
-    for (let i = 0; i < columnsToAdd.length; i++) {
-      indexMapping[headerRow.length + i] = newIndex++;
-    }
+    console.log("Final column order for reordering:", finalColumnOrder);
     
-    // Convert the column order to account for removed columns
-    const adjustedColumnOrder = columnOrder
-      .filter(index => indexMapping[index] !== undefined)
-      .map(index => indexMapping[index]);
-    
-    // Add any missing indices to the end
-    const includedIndices = new Set(adjustedColumnOrder);
-    for (let i = 0; i < dataWithNewColumns[0].length; i++) {
-      if (!includedIndices.has(i)) {
-        adjustedColumnOrder.push(i);
-      }
-    }
-    
-    console.log("Adjusted column order:", adjustedColumnOrder);
-    
-    // Validate the new column order
-    const validation = validateColumnOrder(dataWithNewColumns[0], adjustedColumnOrder);
-    
-    if (validation.isValid) {
-      // Apply the reordering
-      finalData = reorderColumns(dataWithNewColumns, adjustedColumnOrder);
+    // Apply the reordering
+    if (finalColumnOrder.length > 0) {
+      reorderedData = reorderColumns(dataWithNewColumns, finalColumnOrder);
       console.log("Column reordering applied successfully");
-    } else {
-      console.warn("Invalid column order, using original order:", validation.message);
+      console.log("Final header row after reordering:", reorderedData[0]);
     }
   }
   
-  return finalData;
+  // FINALLY, remove selected columns (this should happen LAST)
+  if (selectedHeaders.length > 0) {
+    // Get the header row after reordering
+    const currentHeaderRow = reorderedData[0];
+    
+    // Get indices of headers to remove from the current (reordered) header row
+    const headerIndicesToRemove = selectedHeaders.map(header => 
+      currentHeaderRow.findIndex(h => h === header)
+    ).filter(index => index !== -1);
+    
+    console.log("Headers to remove:", selectedHeaders);
+    console.log("Indices to remove:", headerIndicesToRemove);
+    console.log("Current header row:", currentHeaderRow);
+    
+    // Remove the columns
+    const finalProcessedData = reorderedData.map(row => 
+      row ? row.filter((_, index) => !headerIndicesToRemove.includes(index)) : []
+    );
+    
+    console.log("Final header row after removal:", finalProcessedData[0]);
+    return finalProcessedData;
+  }
+  
+  return reorderedData;
 };
 
 /**

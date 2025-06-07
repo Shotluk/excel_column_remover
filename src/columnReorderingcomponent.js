@@ -1,20 +1,49 @@
-// columnReorderingComponent.js - Updated with Click-to-Move and Dropdown functionality
-import React, { useState } from 'react';
-import { RotateCcw, X, ArrowRight } from 'lucide-react';
+// columnReorderingComponent.js - Updated with Add Column functionality and fixed useEffect dependencies
+import React, { useState, useEffect, useCallback } from 'react';
+import { RotateCcw, X, ArrowRight, Plus } from 'lucide-react';
 
 const ColumnReorderingComponent = ({ 
   headers, 
   onColumnOrderChange, 
-  currentOrder = null 
+  currentOrder = null,
+  onAddColumn, // Handler for adding/removing columns
+  addedColumns = [] // External added columns passed from parent
 }) => {
   const [columnOrder, setColumnOrder] = useState(
     currentOrder || (headers ? headers.map((_, i) => i) : [])
   );
   const [selectedColumnForMove, setSelectedColumnForMove] = useState(null);
   const [moveMode, setMoveMode] = useState(false);
+  const [showAddColumnModal, setShowAddColumnModal] = useState(false);
+  const [newColumnName, setNewColumnName] = useState('');
 
+  // Combine original headers with externally added columns
+  const allHeaders = [...headers, ...addedColumns];
+  
   // Get ordered headers for display
-  const orderedHeaders = columnOrder.map(index => headers[index]).filter(Boolean);
+  const orderedHeaders = columnOrder.map(index => allHeaders[index]).filter(Boolean);
+
+  // Memoize the column order change handler to prevent unnecessary re-renders
+  const handleColumnOrderChange = useCallback((newOrder) => {
+    setColumnOrder(newOrder);
+    onColumnOrderChange(newOrder);
+  }, [onColumnOrderChange]);
+
+  // Update column order when addedColumns changes
+  useEffect(() => {
+    if (addedColumns.length > columnOrder.length - headers.length) {
+      // New columns were added externally, update order
+      const newOrder = [...columnOrder];
+      for (let i = columnOrder.length; i < allHeaders.length; i++) {
+        newOrder.push(i);
+      }
+      handleColumnOrderChange(newOrder);
+    } else if (addedColumns.length < columnOrder.length - headers.length) {
+      // Columns were removed, update order
+      const newOrder = columnOrder.filter(index => index < allHeaders.length);
+      handleColumnOrderChange(newOrder);
+    }
+  }, [addedColumns.length, headers.length, allHeaders.length, columnOrder, handleColumnOrderChange]);
 
   const moveColumn = (fromIndex, toIndex) => {
     if (fromIndex === toIndex) return;
@@ -23,8 +52,7 @@ const ColumnReorderingComponent = ({
     const [movedItem] = newOrder.splice(fromIndex, 1);
     newOrder.splice(toIndex, 0, movedItem);
     
-    setColumnOrder(newOrder);
-    onColumnOrderChange(newOrder);
+    handleColumnOrderChange(newOrder);
   };
 
   const handleColumnClick = (displayIndex) => {
@@ -53,15 +81,50 @@ const ColumnReorderingComponent = ({
     }
   };
 
+  const handleAddColumn = () => {
+    if (newColumnName.trim()) {
+      // Check if column name already exists
+      if (allHeaders.includes(newColumnName.trim())) {
+        alert('Column name already exists. Please choose a different name.');
+        return;
+      }
+
+      const newColumn = newColumnName.trim();
+
+      // Notify parent component about the new column
+      if (onAddColumn) {
+        onAddColumn(newColumn);
+      }
+
+      // Reset modal state
+      setNewColumnName('');
+      setShowAddColumnModal(false);
+    }
+  };
+
+  const handleRemoveColumn = (displayIndex) => {
+    const columnIndex = columnOrder[displayIndex];
+    const columnName = allHeaders[columnIndex];
+    
+    // Only allow removing added columns (not original headers)
+    if (columnIndex >= headers.length) {
+      // Notify parent component about column removal
+      if (onAddColumn) {
+        onAddColumn(null, columnName, 'remove');
+      }
+
+      cancelMove();
+    }
+  };
+
   const cancelMove = () => {
     setSelectedColumnForMove(null);
     setMoveMode(false);
   };
 
   const resetOrder = () => {
-    const originalOrder = headers.map((_, i) => i);
-    setColumnOrder(originalOrder);
-    onColumnOrderChange(originalOrder);
+    const originalOrder = allHeaders.map((_, i) => i);
+    handleColumnOrderChange(originalOrder);
     cancelMove(); // Cancel any active move
   };
 
@@ -70,7 +133,7 @@ const ColumnReorderingComponent = ({
     
     switch (orderType) {
       case 'alphabetical':
-        newOrder = headers
+        newOrder = allHeaders
           .map((header, index) => ({ header: header || '', index }))
           .sort((a, b) => a.header.localeCompare(b.header))
           .map(item => item.index);
@@ -80,7 +143,7 @@ const ColumnReorderingComponent = ({
         const yellowIndices = [];
         const otherIndices = [];
         
-        headers.forEach((header, index) => {
+        allHeaders.forEach((header, index) => {
           const isYellow = yellowColumns.some(yellow => 
             header && header.toLowerCase() === yellow.toLowerCase()
           );
@@ -94,11 +157,10 @@ const ColumnReorderingComponent = ({
         newOrder = [...yellowIndices, ...otherIndices];
         break;
       default:
-        newOrder = headers.map((_, i) => i);
+        newOrder = allHeaders.map((_, i) => i);
     }
     
-    setColumnOrder(newOrder);
-    onColumnOrderChange(newOrder);
+    handleColumnOrderChange(newOrder);
     cancelMove(); // Cancel any active move
   };
 
@@ -115,6 +177,14 @@ const ColumnReorderingComponent = ({
           Column Order
         </h3>
         <div className="flex gap-2">
+          <button
+            onClick={() => setShowAddColumnModal(true)}
+            disabled={moveMode}
+            className="px-3 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Plus className="h-3 w-3" />
+            Add Column
+          </button>
           <button
             onClick={() => applyPredefinedOrder('alphabetical')}
             disabled={moveMode}
@@ -139,6 +209,61 @@ const ColumnReorderingComponent = ({
           </button>
         </div>
       </div>
+
+      {/* Add Column Modal */}
+      {showAddColumnModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-96 max-w-90vw">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-medium text-gray-900">Add New Column</h4>
+              <button
+                onClick={() => {
+                  setShowAddColumnModal(false);
+                  setNewColumnName('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="mb-4">
+              <label htmlFor="columnName" className="block text-sm font-medium text-gray-700 mb-2">
+                Column Name
+              </label>
+              <input
+                id="columnName"
+                type="text"
+                value={newColumnName}
+                onChange={(e) => setNewColumnName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAddColumn()}
+                placeholder="Enter column name..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                autoFocus
+              />
+            </div>
+            
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowAddColumnModal(false);
+                  setNewColumnName('');
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddColumn}
+                disabled={!newColumnName.trim()}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add Column
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Move mode instructions */}
       {moveMode && (
@@ -178,6 +303,7 @@ const ColumnReorderingComponent = ({
             .includes((header || '').toLowerCase());
           const isSelected = moveMode && selectedColumnForMove === displayIndex;
           const isInMoveMode = moveMode && selectedColumnForMove !== null;
+          const isAddedColumn = originalIndex >= headers.length; // Check if this is an added column
 
           return (
             <React.Fragment key={`${originalIndex}-${displayIndex}`}>
@@ -194,7 +320,11 @@ const ColumnReorderingComponent = ({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className={`text-sm font-medium truncate block ${
-                      isYellow ? 'text-yellow-600' : 'text-gray-700'
+                      isAddedColumn 
+                        ? 'text-green-600' 
+                        : isYellow 
+                          ? 'text-yellow-600' 
+                          : 'text-gray-700'
                     } ${isSelected ? 'text-blue-700' : ''}`}>
                       {header}
                     </span>
@@ -203,15 +333,32 @@ const ColumnReorderingComponent = ({
                         Moving
                       </span>
                     )}
+                    {isAddedColumn && (
+                      <span className="px-2 py-1 text-xs bg-green-200 text-green-800 rounded-full font-medium">
+                        New
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs text-gray-500">
                     Position {displayIndex + 1}
                   </span>
                 </div>
 
-                {/* Dropdown for position selection */}
+                {/* Dropdown and remove button for position selection */}
                 {!isInMoveMode && (
                   <div className="flex items-center gap-2">
+                    {isAddedColumn && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveColumn(displayIndex);
+                        }}
+                        className="p-1 text-red-500 hover:bg-red-100 rounded"
+                        title="Remove column"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
                     <select
                       value={displayIndex + 1}
                       onChange={(e) => handleDropdownChange(displayIndex, e.target.value)}
@@ -265,7 +412,7 @@ const ColumnReorderingComponent = ({
         <span className="font-medium">Tip:</span> {
           moveMode 
             ? "Click on the blue lines to place your selected column, or click the X to cancel."
-            : "Click any column to start moving it, or use the dropdown to select a new position. Yellow columns are priority fields."
+            : "Click any column to start moving it, or use the dropdown to select a new position. Green columns are newly added, yellow columns are priority fields."
         }
       </div>
     </div>
