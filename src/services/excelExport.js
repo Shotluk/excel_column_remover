@@ -1,7 +1,35 @@
-// excelExport.js - Updated with ID column handling to prevent unwanted numeric formatting
+// excelExport.js - Updated with ID column handling and minimal console logging
 
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
+
+/**
+ * Convert Excel serial number to date string
+ * @param {number} serialNumber - Excel serial number
+ * @param {string} format - Date format (DD/MM/YYYY or MM/DD/YYYY)
+ * @returns {string|number} Converted date string or original value
+ */
+const convertSerialToDateString = (serialNumber, format = 'DD/MM/YYYY') => {
+  if (typeof serialNumber !== 'number' || serialNumber < 25000 || serialNumber > 50000) {
+    return serialNumber; // Return as-is if not a valid serial number
+  }
+  
+  try {
+    // Excel epoch is December 30, 1899
+    const excelEpoch = new Date(1899, 11, 30);
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const dateObj = new Date(excelEpoch.getTime() + serialNumber * millisecondsPerDay);
+    
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0'); // getMonth() is 0-indexed
+    const year = dateObj.getFullYear();
+    
+    return format === 'MM/DD/YYYY' ? `${month}/${day}/${year}` : `${day}/${month}/${year}`;
+  } catch (error) {
+    console.error('Error converting serial number:', error);
+    return serialNumber;
+  }
+};
 
 /**
  * Identify ID columns by header names to prevent numeric formatting
@@ -14,26 +42,12 @@ const identifyIdColumns = (headerRow) => {
   if (headerRow && headerRow.length > 0) {
     headerRow.forEach((header, index) => {
       if (header && typeof header === 'string') {
-        // Common patterns for ID columns - look for keywords or patterns
         const idPatterns = [
-          /id$/i,          // Ends with 'id' (case insensitive)
-          /^id/i,          // Starts with 'id'
-          /no$/i,          // Ends with 'no'
-          /number$/i,      // Ends with 'number'
-          /code$/i,        // Ends with 'code'
-          /^bill/i,        // Starts with 'bill'
-          /^file/i,        // Starts with 'file'
-          /^card/i,        // Starts with 'card'
-          /^claim/i,       // Starts with 'claim'
-          /^ref/i,         // Starts with 'ref'
-          /^account/i,     // Starts with 'account'
-          /^customer/i,    // Starts with 'customer'
-          /^policy/i,      // Starts with 'policy'
-          /^order/i,       // Starts with 'order'
-          /^invoice/i,     // Starts with 'invoice'
+          /id$/i, /^id/i, /no$/i, /number$/i, /code$/i,
+          /^bill/i, /^file/i, /^card/i, /^claim/i, /^ref/i,
+          /^account/i, /^customer/i, /^policy/i, /^order/i, /^invoice/i,
         ];
         
-        // Check if header matches any ID patterns
         if (idPatterns.some(pattern => pattern.test(header))) {
           idColumnIndices.push(index);
         }
@@ -41,7 +55,6 @@ const identifyIdColumns = (headerRow) => {
     });
   }
   
-  console.log("Identified ID columns at indices:", idColumnIndices);
   return idColumnIndices;
 };
 
@@ -57,12 +70,10 @@ const calculateColumnWidths = (data, maxSampleRows = 100) => {
   const widths = Array(data[0].length).fill(10); // Default minimum width
   const headerRow = data[0];
   
-  // Factor to convert character count to Excel column width
-  // Excel column width is based on the number of characters in the default font
   const charWidthFactor = 1.2;
   const minWidth = 8;
   const maxWidth = 50;
-  const padding = 2; // Extra space for padding
+  const padding = 2;
   
   // Start with headers
   headerRow.forEach((header, colIndex) => {
@@ -84,24 +95,17 @@ const calculateColumnWidths = (data, maxSampleRows = 100) => {
       if (cell !== null && cell !== undefined) {
         let cellLength;
         
-        // Handle different data types
         if (typeof cell === 'number') {
-          // For numbers, estimate the display width
           cellLength = String(cell).length;
-          
-          // If it's a floating point number, add space for decimal places
           if (cell % 1 !== 0) {
             cellLength = Math.max(cellLength, String(cell.toFixed(2)).length);
           }
         } else if (cell instanceof Date) {
-          // For dates, estimate a fixed width (e.g., "DD/MM/YYYY" format)
           cellLength = 12; 
         } else {
-          // For strings and other types
           cellLength = String(cell).length;
         }
         
-        // Update column width if this cell is wider
         widths[colIndex] = Math.max(widths[colIndex], 
           Math.min(maxWidth, Math.ceil(cellLength * charWidthFactor) + padding));
       }
@@ -117,42 +121,48 @@ const calculateColumnWidths = (data, maxSampleRows = 100) => {
  * @returns {ArrayBuffer} Excel file as binary data
  */
 export const exportWithXLSX = (processedData) => {
-  // Create a new workbook
   const newWorkbook = XLSX.utils.book_new();
   
-  // Identify ID columns to format as text
   const headerRow = processedData[0] || [];
   const idColumns = identifyIdColumns(headerRow);
+  const dateColumns = identifyDateColumns(processedData);
   
-  // Convert to worksheet with specific formatting
-  const newSheet = XLSX.utils.aoa_to_sheet(processedData);
+  // Convert serial numbers to dates in date columns
+  const convertedData = processedData.map((row, rowIndex) => {
+    if (rowIndex === 0 || !row) return row; // Skip header row
+    
+    return row.map((cell, colIndex) => {
+      if (dateColumns.includes(colIndex) && 
+          typeof cell === 'number' && 
+          cell > 25000 && cell < 50000) {
+        return convertSerialToDateString(cell);
+      }
+      return cell;
+    });
+  });
+  
+  const newSheet = XLSX.utils.aoa_to_sheet(convertedData);
   
   // Apply text format to ID columns
   idColumns.forEach(colIndex => {
     const colLetter = XLSX.utils.encode_col(colIndex);
     
-    // Format all cells in this column as text
-    for (let rowIndex = 1; rowIndex < processedData.length; rowIndex++) {
-      const cellRef = colLetter + (rowIndex + 1); // +1 because XLSX is 1-indexed for rows
+    for (let rowIndex = 1; rowIndex < convertedData.length; rowIndex++) {
+      const cellRef = colLetter + (rowIndex + 1);
       
       if (newSheet[cellRef]) {
-        // Ensure cell has a format object
         if (!newSheet[cellRef].z) {
-          newSheet[cellRef].z = '@'; // '@' is the Excel format code for Text
+          newSheet[cellRef].z = '@';
         }
       }
     }
   });
   
-  // Calculate optimal column widths
-  const columnWidths = calculateColumnWidths(processedData);
-  
-  // Set column widths
+  const columnWidths = calculateColumnWidths(convertedData);
   newSheet['!cols'] = columnWidths.map(width => ({ width }));
   
   XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Sheet1');
   
-  // Convert to binary
   const excelBinary = XLSX.write(newWorkbook, { 
     bookType: 'xlsx', 
     type: 'array' 
@@ -163,16 +173,14 @@ export const exportWithXLSX = (processedData) => {
 
 /**
  * Calculate optimal column width for ExcelJS
- * This is more accurate as it can use the actual font metrics
  * @param {ExcelJS.Worksheet} worksheet - The worksheet 
  * @param {Array} data - The data as 2D array
  */
 const applyOptimalColumnWidths = (worksheet, data) => {
   const columnWidths = calculateColumnWidths(data);
   
-  // Apply calculated widths to worksheet columns
   columnWidths.forEach((width, i) => {
-    const col = worksheet.getColumn(i + 1); // ExcelJS uses 1-based indexing
+    const col = worksheet.getColumn(i + 1);
     col.width = width;
   });
 };
@@ -190,20 +198,21 @@ const identifyDateColumns = (data) => {
   
   // First pass: check headers for date-related keywords
   headerRow.forEach((header, index) => {
-    if (header && typeof header === 'string' && 
-        (header.toLowerCase().includes('date') || 
-         header.toLowerCase().includes('time') ||
-         header.toLowerCase().includes('submission'))) {
-      dateColumnIndices.push(index);
+    if (header && typeof header === 'string') {
+      const headerStr = header.toLowerCase().trim();
+      
+      if (headerStr.includes('date') || 
+          headerStr.includes('time') ||
+          headerStr.includes('submission')) {
+        dateColumnIndices.push(index);
+      }
     }
   });
   
   // Second pass: analyze content for date patterns
-  // We'll only check a few rows for performance
   const rowsToCheck = Math.min(10, data.length - 1);
   
   for (let colIndex = 0; colIndex < headerRow.length; colIndex++) {
-    // Skip already identified date columns
     if (dateColumnIndices.includes(colIndex)) continue;
     
     let datePatternMatches = 0;
@@ -216,37 +225,43 @@ const identifyDateColumns = (data) => {
       const cellValue = row[colIndex];
       rowsWithContent++;
       
-      // Check if it's already a date object
       if (cellValue instanceof Date) {
         datePatternMatches++;
         continue;
       }
       
-      // Check for common date patterns in strings
       if (typeof cellValue === 'string') {
-        // Various date formats: DD/MM/YYYY, MM-DD-YYYY, YYYY-MM-DD, etc.
         const datePattern = /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})|(\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/;
         if (datePattern.test(cellValue)) {
           datePatternMatches++;
         }
       }
       
-      // Check for Excel date serial numbers (numbers within a certain range)
       if (typeof cellValue === 'number') {
-        // Excel date serial numbers typically fall within this range
         if (cellValue > 25000 && cellValue < 50000) {
           datePatternMatches++;
         }
       }
     }
     
-    // If most of the cells in this column match date patterns, consider it a date column
     if (rowsWithContent > 0 && datePatternMatches / rowsWithContent > 0.6) {
       dateColumnIndices.push(colIndex);
     }
   }
   
-  console.log("Identified date columns at indices:", dateColumnIndices);
+  // Force detection of Service Date column if present
+  headerRow.forEach((header, index) => {
+    if (header && typeof header === 'string') {
+      const headerStr = header.toString().toLowerCase().trim();
+      if ((headerStr.includes('service') && headerStr.includes('date')) || 
+          headerStr === 'service date') {
+        if (!dateColumnIndices.includes(index)) {
+          dateColumnIndices.push(index);
+        }
+      }
+    }
+  });
+  
   return dateColumnIndices;
 };
 
@@ -264,7 +279,6 @@ const identifyAmountColumns = (data, idColumns = []) => {
   
   // First pass: check headers for amount-related keywords
   headerRow.forEach((header, index) => {
-    // Skip ID columns - they should never be treated as amount columns
     if (idColumns.includes(index)) return;
     
     if (header && typeof header === 'string' && 
@@ -281,11 +295,9 @@ const identifyAmountColumns = (data, idColumns = []) => {
   });
   
   // Second pass: analyze content for numeric patterns
-  // We'll only check a few rows for performance
   const rowsToCheck = Math.min(10, data.length - 1);
   
   for (let colIndex = 0; colIndex < headerRow.length; colIndex++) {
-    // Skip already identified amount columns or ID columns
     if (amountColumnIndices.includes(colIndex) || idColumns.includes(colIndex)) continue;
     
     let numericValueCount = 0;
@@ -298,17 +310,13 @@ const identifyAmountColumns = (data, idColumns = []) => {
       const cellValue = row[colIndex];
       rowsWithContent++;
       
-      // Check if it's a number
       if (typeof cellValue === 'number') {
         numericValueCount++;
         continue;
       }
       
-      // Check for currency/numeric patterns in strings
       if (typeof cellValue === 'string') {
-        // Currency pattern: optional currency symbol, digits, optional decimal point, more digits
         const currencyPattern = /^[$€£¥]?\s*\d+(\.\d+)?$/;
-        // Numeric pattern with commas: 1,234.56
         const numericPattern = /^-?\s*\d{1,3}(,\d{3})*(\.\d+)?$/;
         
         if (currencyPattern.test(cellValue) || numericPattern.test(cellValue)) {
@@ -317,13 +325,11 @@ const identifyAmountColumns = (data, idColumns = []) => {
       }
     }
     
-    // If most of the cells in this column are numeric, consider it an amount column
     if (rowsWithContent > 0 && numericValueCount / rowsWithContent > 0.6) {
       amountColumnIndices.push(colIndex);
     }
   }
   
-  console.log("Identified amount columns at indices:", amountColumnIndices);
   return amountColumnIndices;
 };
 
@@ -339,14 +345,27 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Sheet1');
     
-    // Identify special columns using our enhanced detection
     const headerRow = data[0] || [];
     const idColumnIndices = identifyIdColumns(headerRow);
     const dateColumnIndices = identifyDateColumns(data);
     const amountColumnIndices = identifyAmountColumns(data, idColumnIndices);
     
+    // Convert serial numbers to dates in date columns before processing
+    const processedData = data.map((row, rowIndex) => {
+      if (rowIndex === 0 || !row) return row;
+      
+      return row.map((cell, colIndex) => {
+        if (dateColumnIndices.includes(colIndex) && 
+            typeof cell === 'number' && 
+            cell > 25000 && cell < 50000) {
+          return convertSerialToDateString(cell);
+        }
+        return cell;
+      });
+    });
+    
     // Add all rows first
-    data.forEach((row, rowIndex) => {
+    processedData.forEach((row, rowIndex) => {
       if (!row) return;
       
       const excelRow = worksheet.addRow(row);
@@ -369,22 +388,18 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
       } 
       // Special formatting for data rows
       else {
-        // Format ID columns as text to prevent numeric formatting
+        // Format ID columns as text
         idColumnIndices.forEach(colIndex => {
           if (colIndex < row.length) {
             const cell = excelRow.getCell(colIndex + 1);
             const value = row[colIndex];
             
-            // Preserve the original value but enforce text format
             if (value !== null && value !== undefined) {
-              // For numbers, convert to string to preserve exact value
               if (typeof value === 'number') {
                 cell.value = String(value);
               } else {
                 cell.value = value;
               }
-              
-              // Explicitly set format to text
               cell.numFmt = '@';
             }
           }
@@ -396,13 +411,10 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
             const cell = excelRow.getCell(colIndex + 1);
             const value = row[colIndex];
             
-            // Handle various date formats
             if (value instanceof Date) {
-              // Already a date object
               cell.value = value;
               cell.numFmt = 'dd/mm/yyyy';
             } else if (typeof value === 'number' && value > 25000 && value < 50000) {
-              // Excel date serial number
               const excelEpoch = new Date(1899, 11, 30);
               const millisecondsPerDay = 24 * 60 * 60 * 1000;
               const dateObj = new Date(excelEpoch.getTime() + value * millisecondsPerDay);
@@ -410,9 +422,8 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
               cell.value = dateObj;
               cell.numFmt = 'dd/mm/yyyy';
             } else if (typeof value === 'string') {
-              cell.value = value;            // Keep as original text
-              cell.numFmt = '@';             // Format as text
-
+              cell.value = value;
+              cell.numFmt = '@';
             }
           }
         });
@@ -423,11 +434,9 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
             const cell = excelRow.getCell(colIndex + 1);
             const value = row[colIndex];
             
-            // Handle various number formats
             if (typeof value === 'number') {
               cell.numFmt = '#,##0.00';
             } else if (typeof value === 'string') {
-              // Try to parse currency strings
               const currencyMatch = value.match(/^[$€£¥]?\s*(\d+(?:\.\d+)?)$/);
               if (currencyMatch) {
                 try {
@@ -443,8 +452,7 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
       }
     });
     
-    // Apply auto-fit column widths based on content
-    applyOptimalColumnWidths(worksheet, data);
+    applyOptimalColumnWidths(worksheet, processedData);
     
     // Apply borders to ALL cells
     worksheet.eachRow((row) => {
@@ -458,7 +466,6 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
       });
     });
     
-    // Create and download the file
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -466,7 +473,6 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
     
     let downloadName = `modified_${fileName}`;
     
-    // Add info about what was removed to the filename
     if (selectedMonths.length > 0) {
       downloadName = `without_${selectedMonths.join('_')}_${fileName}`;
     }
@@ -507,15 +513,12 @@ export const downloadXLSXFile = (processedData, fileName, selectedMonths = []) =
   
   let downloadName = `modified_${fileName}`;
   
-  // Add info about what was removed to the filename
   if (selectedMonths.length > 0) {
     downloadName = `without_${selectedMonths.join('_')}_${fileName}`;
   }
   
   downloadFile(blob, downloadName);
 };
-
-// Add these functions to excelExport.js
 
 /**
  * Export separated month data with advanced styling using ExcelJS
@@ -526,11 +529,9 @@ export const downloadXLSXFile = (processedData, fileName, selectedMonths = []) =
  */
 export const exportSeparatedDataWithStyling = async (separatedData, fileName, useBorders = true) => {
   if (useBorders) {
-    // Use ExcelJS for advanced styling with borders
     try {
       const workbook = new ExcelJS.Workbook();
       
-      // Identify special columns for consistent formatting across all sheets
       const headerRow = separatedData.headerRow || [];
       const idColumnIndices = identifyIdColumns(headerRow);
       const dateColumnIndices = identifyDateColumns([headerRow, ...(separatedData.monthsWithData[0]?.rows.slice(0, 10) || [])]);
@@ -541,8 +542,22 @@ export const exportSeparatedDataWithStyling = async (separatedData, fileName, us
         const worksheet = workbook.addWorksheet(month.name);
         const sheetData = [separatedData.headerRow, ...month.rows];
         
+        // Convert serial numbers to dates in date columns before processing
+        const processedSheetData = sheetData.map((row, rowIndex) => {
+          if (rowIndex === 0 || !row) return row;
+          
+          return row.map((cell, colIndex) => {
+            if (dateColumnIndices.includes(colIndex) && 
+                typeof cell === 'number' && 
+                cell > 25000 && cell < 50000) {
+              return convertSerialToDateString(cell);
+            }
+            return cell;
+          });
+        });
+        
         // Add all rows first
-        sheetData.forEach((row, rowIndex) => {
+        processedSheetData.forEach((row, rowIndex) => {
           if (!row) return;
           
           const excelRow = worksheet.addRow(row);
@@ -563,9 +578,8 @@ export const exportSeparatedDataWithStyling = async (separatedData, fileName, us
               };
             });
           } 
-          // Special formatting for data rows
           else {
-            // Format ID columns as text to prevent numeric formatting
+            // Format ID columns as text
             idColumnIndices.forEach(colIndex => {
               if (colIndex < row.length) {
                 const cell = excelRow.getCell(colIndex + 1);
@@ -629,8 +643,7 @@ export const exportSeparatedDataWithStyling = async (separatedData, fileName, us
           }
         });
         
-        // Apply auto-fit column widths based on content
-        applyOptimalColumnWidths(worksheet, sheetData);
+        applyOptimalColumnWidths(worksheet, processedSheetData);
         
         // Apply borders to ALL cells
         worksheet.eachRow((row) => {
@@ -645,7 +658,6 @@ export const exportSeparatedDataWithStyling = async (separatedData, fileName, us
         });
       }
       
-      // Create and download the file
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -662,11 +674,9 @@ export const exportSeparatedDataWithStyling = async (separatedData, fileName, us
       
     } catch (error) {
       console.error('Error with ExcelJS styling:', error);
-      // Fallback to basic XLSX export
       exportSeparatedDataBasic(separatedData, fileName);
     }
   } else {
-    // Use basic XLSX export
     exportSeparatedDataBasic(separatedData, fileName);
   }
 };
@@ -680,61 +690,67 @@ export const exportSeparatedDataBasic = (separatedData, fileName) => {
   const workbook = XLSX.utils.book_new();
   
   separatedData.monthsWithData.forEach(month => {
-    // Create data for this month (header + rows)
-    const sheetData = [separatedData.headerRow, ...month.rows];
+    // Convert serial numbers before creating sheet
+    const convertedData = [
+      separatedData.headerRow,
+      ...month.rows.map(row => {
+        if (!row) return row;
+        
+        return row.map((cell, colIndex) => {
+          if (typeof cell === 'number' && cell > 25000 && cell < 50000) {
+            return convertSerialToDateString(cell);
+          }
+          return cell;
+        });
+      })
+    ];
     
-    // Create worksheet
-    const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+    const worksheet = XLSX.utils.aoa_to_sheet(convertedData);
     
     // Calculate column widths for better display
     const columnWidths = [];
-    if (sheetData.length > 0) {
-      for (let colIndex = 0; colIndex < sheetData[0].length; colIndex++) {
-        let maxLength = 10; // minimum width
+    if (convertedData.length > 0) {
+      for (let colIndex = 0; colIndex < convertedData[0].length; colIndex++) {
+        let maxLength = 10;
         
-        // Check header length
-        if (sheetData[0][colIndex]) {
-          maxLength = Math.max(maxLength, String(sheetData[0][colIndex]).length);
+        if (convertedData[0][colIndex]) {
+          maxLength = Math.max(maxLength, String(convertedData[0][colIndex]).length);
         }
         
-        // Check a few data rows for optimal width
-        for (let rowIndex = 1; rowIndex < Math.min(11, sheetData.length); rowIndex++) {
-          if (sheetData[rowIndex] && sheetData[rowIndex][colIndex]) {
-            maxLength = Math.max(maxLength, String(sheetData[rowIndex][colIndex]).length);
+        for (let rowIndex = 1; rowIndex < Math.min(11, convertedData.length); rowIndex++) {
+          if (convertedData[rowIndex] && convertedData[rowIndex][colIndex]) {
+            maxLength = Math.max(maxLength, String(convertedData[rowIndex][colIndex]).length);
           }
         }
         
-        columnWidths.push({ width: Math.min(maxLength + 2, 50) }); // Add padding, max 50
+        columnWidths.push({ width: Math.min(maxLength + 2, 50) });
       }
       
       worksheet['!cols'] = columnWidths;
     }
     
     // Identify ID columns to format as text
-    const headerRow = sheetData[0] || [];
+    const headerRow = convertedData[0] || [];
     const idColumns = identifyIdColumns(headerRow);
     
     // Apply text format to ID columns
     idColumns.forEach(colIndex => {
       const colLetter = XLSX.utils.encode_col(colIndex);
       
-      // Format all cells in this column as text
-      for (let rowIndex = 1; rowIndex < sheetData.length; rowIndex++) {
-        const cellRef = colLetter + (rowIndex + 1); // +1 because XLSX is 1-indexed for rows
+      for (let rowIndex = 1; rowIndex < convertedData.length; rowIndex++) {
+        const cellRef = colLetter + (rowIndex + 1);
         
         if (worksheet[cellRef]) {
           if (!worksheet[cellRef].z) {
-            worksheet[cellRef].z = '@'; // '@' is the Excel format code for Text
+            worksheet[cellRef].z = '@';
           }
         }
       }
     });
     
-    // Add the sheet with month name
     XLSX.utils.book_append_sheet(workbook, worksheet, month.name);
   });
   
-  // Create binary data and download
   const excelBinary = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([excelBinary], { 
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 

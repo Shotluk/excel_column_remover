@@ -12,6 +12,24 @@ export const getMonthFromDate = (dateValue, assumeFormat = 'DD/MM/YYYY') => {
   const str = String(dateValue).trim();
 
   // Excel serial number handling remains
+  // Handle Excel serial numbers first
+  if (typeof dateValue === 'number' && dateValue > 25000 && dateValue < 50000) {
+    try {
+      // Excel epoch is December 30, 1899
+      const excelEpoch = new Date(1899, 11, 30);
+      const millisecondsPerDay = 24 * 60 * 60 * 1000;
+      const dateObj = new Date(excelEpoch.getTime() + dateValue * millisecondsPerDay);
+      
+      // Extract month (1-12) and convert to padded string
+      const month = dateObj.getMonth() + 1; // getMonth() returns 0-11
+      return month >= 1 && month <= 12 ? month.toString().padStart(2, '0') : null;
+    } catch (error) {
+      console.log(`Error parsing Excel serial number ${dateValue}:`, error);
+      return null;
+    }
+  }
+  
+  
 
   if (assumeFormat === 'DD/MM/YYYY') {
     const match = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
@@ -45,13 +63,37 @@ export const findDateColumn = (headerRow, sampleRows = []) => {
   console.log('Headers:', headerRow);
   
   // Strategy 1: Look for obvious date headers
-  const dateKeywords = ['date', 'submission', 'created', 'time'];
+  const dateKeywords = ['service','date', 'submission', 'created', 'time'];
+  const multiWordKeywords = ['service date'];
+  
+   // Strategy 1a: Check multi-word keywords FIRST (higher priority)
+  
   
   for (let i = 0; i < headerRow.length; i++) {
     const header = headerRow[i];
     if (!header) continue;
     
-    const headerStr = header.toString().toLowerCase();
+    const headerStr = header.toString().toLowerCase().trim();
+    
+    // Check multi-word keywords first with space normalization
+    if (multiWordKeywords.some(keyword => {
+      const normalizedHeader = headerStr.replace(/\s+/g, ' ');
+      const normalizedKeyword = keyword.toLowerCase().trim();
+      return normalizedHeader.includes(normalizedKeyword);
+    })) {
+      console.log(`Found date column: Index ${i} - "${header}"`);
+      return i;
+    }
+  }
+  
+  // Strategy 1b: Then check single-word keywords
+  
+  for (let i = 0; i < headerRow.length; i++) {
+    const header = headerRow[i];
+    if (!header) continue;
+    
+    const headerStr = header.toString().toLowerCase().trim();
+    
     if (dateKeywords.some(keyword => headerStr.includes(keyword))) {
       console.log(`Found date column: Index ${i} - "${header}"`);
       return i;

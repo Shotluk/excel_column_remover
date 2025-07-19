@@ -12,7 +12,13 @@ import {
   toggleMonthSelection,
 } from '../services/dataProcessing.js';
 import { calculateRowsRemoved, getMonthFromDate } from '../services/dateUtilities.js';
-import { exportWithXLSX, exportWithBordersUsingExcelJS, downloadXLSXFile } from '../services/excelExport.js';
+import { 
+  exportWithXLSX, 
+  exportWithBordersUsingExcelJS, 
+  downloadXLSXFile,
+  exportSeparatedDataWithStyling,  
+  exportSeparatedDataBasic        
+} from '../services/excelExport.js';
 import { validateProcessingRequirements, validateDataAvailability, isYellowColumn } from '../utils/validationUtilites.js';
 
 // Import the updated Column Reordering Component
@@ -146,162 +152,6 @@ const separateDataByMonths = (jsonData, dateColumnIndex, headerRowIndex, selecte
   };
 };
 
-const exportSeparatedDataWithStyling = async (separatedData, fileName, useBorders = true) => {
-  if (useBorders) {
-    // Use ExcelJS for advanced styling with borders
-    try {
-      const ExcelJS = await import('exceljs');
-      const workbook = new ExcelJS.Workbook();
-      
-      // Create a sheet for each month
-      for (const month of separatedData.monthsWithData) {
-        const worksheet = workbook.addWorksheet(month.name);
-        const sheetData = [separatedData.headerRow, ...month.rows];
-        
-        // Add all rows first
-        sheetData.forEach((row, rowIndex) => {
-          if (!row) return;
-          
-          const excelRow = worksheet.addRow(row);
-          
-          // Special formatting for header row
-          if (rowIndex === 0) {
-            excelRow.eachCell((cell) => {
-              cell.font = { bold: true };
-              cell.fill = {
-                type: 'pattern',
-                pattern: 'solid',
-                fgColor: { argb: 'FFE0E0E0' }
-              };
-              cell.alignment = { 
-                vertical: 'middle', 
-                horizontal: 'center',
-                wrapText: true
-              };
-            });
-          }
-        });
-        
-        // Apply auto-fit column widths
-        const columnWidths = [];
-        if (sheetData.length > 0) {
-          for (let colIndex = 0; colIndex < sheetData[0].length; colIndex++) {
-            let maxLength = 10; // minimum width
-            
-            // Check header length
-            if (sheetData[0][colIndex]) {
-              maxLength = Math.max(maxLength, String(sheetData[0][colIndex]).length);
-            }
-            
-            // Check a few data rows for optimal width
-            for (let rowIndex = 1; rowIndex < Math.min(11, sheetData.length); rowIndex++) {
-              if (sheetData[rowIndex] && sheetData[rowIndex][colIndex]) {
-                maxLength = Math.max(maxLength, String(sheetData[rowIndex][colIndex]).length);
-              }
-            }
-            
-            columnWidths.push(Math.min(maxLength + 2, 50)); // Add padding, max 50
-          }
-          
-          // Apply calculated widths
-          columnWidths.forEach((width, i) => {
-            const col = worksheet.getColumn(i + 1);
-            col.width = width;
-          });
-        }
-        
-        // Apply borders to ALL cells
-        worksheet.eachRow((row) => {
-          row.eachCell((cell) => {
-            cell.border = {
-              top: { style: 'thin', color: { argb: 'FF000000' } },
-              bottom: { style: 'thin', color: { argb: 'FF000000' } },
-              left: { style: 'thin', color: { argb: 'FF000000' } },
-              right: { style: 'thin', color: { argb: 'FF000000' } }
-            };
-          });
-        });
-      }
-      
-      // Create and download the file
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
-      
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `separated_by_months_styled_${fileName}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-    } catch (error) {
-      console.error('Error with ExcelJS styling:', error);
-      // Fallback to basic XLSX export
-      exportSeparatedDataBasic(separatedData, fileName);
-    }
-  } else {
-    // Use basic XLSX export
-    exportSeparatedDataBasic(separatedData, fileName);
-  }
-};
-
-const exportSeparatedDataBasic = (separatedData, fileName) => {
-  const workbook = XLSX.utils.book_new();
-  
-  separatedData.monthsWithData.forEach(month => {
-    // Create data for this month (header + rows)
-    const sheetData = [separatedData.headerRow, ...month.rows];
-    
-    // Create worksheet
-    const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-    
-    // Calculate column widths for better display
-    const columnWidths = [];
-    if (sheetData.length > 0) {
-      for (let colIndex = 0; colIndex < sheetData[0].length; colIndex++) {
-        let maxLength = 10; // minimum width
-        
-        // Check header length
-        if (sheetData[0][colIndex]) {
-          maxLength = Math.max(maxLength, String(sheetData[0][colIndex]).length);
-        }
-        
-        // Check a few data rows for optimal width
-        for (let rowIndex = 1; rowIndex < Math.min(11, sheetData.length); rowIndex++) {
-          if (sheetData[rowIndex] && sheetData[rowIndex][colIndex]) {
-            maxLength = Math.max(maxLength, String(sheetData[rowIndex][colIndex]).length);
-          }
-        }
-        
-        columnWidths.push({ width: Math.min(maxLength + 2, 50) }); // Add padding, max 50
-      }
-      
-      worksheet['!cols'] = columnWidths;
-    }
-    
-    // Add the sheet with month name
-    XLSX.utils.book_append_sheet(workbook, worksheet, month.name);
-  });
-  
-  // Create binary data and download
-  const excelBinary = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-  const blob = new Blob([excelBinary], { 
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
-  });
-  
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `separated_by_months_${fileName}`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-};
 
 // Main ExcelColumnRemover Component
 export default function ExcelColumnRemover() {
@@ -450,14 +300,25 @@ export default function ExcelColumnRemover() {
   
   // UPDATED: Download separated file with styling
   const downloadSeparatedFile = async () => {
-    if (!separatedData) return;
-    
-    try {
-      await exportSeparatedDataWithStyling(separatedData, fileName, useBorders);
-    } catch (error) {
-      setError('Error downloading separated file: ' + error.message);
-    }
-  };
+  console.log("=== DOWNLOAD BUTTON CLICKED ===");
+  console.log("separatedData:", separatedData);
+  console.log("fileName:", fileName);
+  console.log("useBorders:", useBorders);
+  
+  if (!separatedData) {
+    console.error("No separated data available!");
+    return;
+  }
+  
+  try {
+    console.log("Calling exportSeparatedDataWithStyling...");
+    await exportSeparatedDataWithStyling(separatedData, fileName, useBorders);
+    console.log("Export function completed");
+  } catch (error) {
+    console.error("Error in downloadSeparatedFile:", error);
+    setError('Error downloading separated file: ' + error.message);
+  }
+};
   
   // Process the file using modular functions
   const processFile = async () => {
