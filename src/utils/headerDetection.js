@@ -1,5 +1,3 @@
-// headerDetection.js - Functions for detecting and analyzing header rows in Excel data
-
 /**
  * Helper function to evaluate data consistency in rows following a potential header
  * @param {Array} jsonData - The complete Excel data as array of arrays

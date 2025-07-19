@@ -410,31 +410,9 @@ export const exportWithBordersUsingExcelJS = async (data, fileName, selectedMont
               cell.value = dateObj;
               cell.numFmt = 'dd/mm/yyyy';
             } else if (typeof value === 'string') {
-              // Try to parse date strings
-              const dateFormats = [
-                // DD/MM/YYYY
-                { regex: /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/, fn: (m) => new Date(parseInt(m[3]), parseInt(m[2])-1, parseInt(m[1])) },
-                // MM/DD/YYYY
-                { regex: /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/, fn: (m) => new Date(parseInt(m[3]), parseInt(m[1])-1, parseInt(m[2])) },
-                // YYYY-MM-DD
-                { regex: /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/, fn: (m) => new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3])) }
-              ];
-              
-              for (const format of dateFormats) {
-                const match = value.match(format.regex);
-                if (match) {
-                  try {
-                    const dateObj = format.fn(match);
-                    if (!isNaN(dateObj.getTime())) {
-                      cell.value = dateObj;
-                      cell.numFmt = 'dd/mm/yyyy';
-                      break;
-                    }
-                  } catch (e) {
-                    // If date parsing fails, keep as string
-                  }
-                }
-              }
+              cell.value = value;            // Keep as original text
+              cell.numFmt = '@';             // Format as text
+
             }
           }
         });
@@ -535,4 +513,239 @@ export const downloadXLSXFile = (processedData, fileName, selectedMonths = []) =
   }
   
   downloadFile(blob, downloadName);
+};
+
+// Add these functions to excelExport.js
+
+/**
+ * Export separated month data with advanced styling using ExcelJS
+ * @param {Object} separatedData - Separated month data with headerRow and monthsWithData
+ * @param {string} fileName - Original filename for download naming
+ * @param {boolean} useBorders - Whether to apply borders and styling
+ * @returns {Promise<void>} Downloads the file directly
+ */
+export const exportSeparatedDataWithStyling = async (separatedData, fileName, useBorders = true) => {
+  if (useBorders) {
+    // Use ExcelJS for advanced styling with borders
+    try {
+      const workbook = new ExcelJS.Workbook();
+      
+      // Identify special columns for consistent formatting across all sheets
+      const headerRow = separatedData.headerRow || [];
+      const idColumnIndices = identifyIdColumns(headerRow);
+      const dateColumnIndices = identifyDateColumns([headerRow, ...(separatedData.monthsWithData[0]?.rows.slice(0, 10) || [])]);
+      const amountColumnIndices = identifyAmountColumns([headerRow, ...(separatedData.monthsWithData[0]?.rows.slice(0, 10) || [])], idColumnIndices);
+      
+      // Create a sheet for each month
+      for (const month of separatedData.monthsWithData) {
+        const worksheet = workbook.addWorksheet(month.name);
+        const sheetData = [separatedData.headerRow, ...month.rows];
+        
+        // Add all rows first
+        sheetData.forEach((row, rowIndex) => {
+          if (!row) return;
+          
+          const excelRow = worksheet.addRow(row);
+          
+          // Special formatting for header row
+          if (rowIndex === 0) {
+            excelRow.eachCell((cell) => {
+              cell.font = { bold: true };
+              cell.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFE0E0E0' }
+              };
+              cell.alignment = { 
+                vertical: 'middle', 
+                horizontal: 'center',
+                wrapText: true
+              };
+            });
+          } 
+          // Special formatting for data rows
+          else {
+            // Format ID columns as text to prevent numeric formatting
+            idColumnIndices.forEach(colIndex => {
+              if (colIndex < row.length) {
+                const cell = excelRow.getCell(colIndex + 1);
+                const value = row[colIndex];
+                
+                if (value !== null && value !== undefined) {
+                  if (typeof value === 'number') {
+                    cell.value = String(value);
+                  } else {
+                    cell.value = value;
+                  }
+                  cell.numFmt = '@';
+                }
+              }
+            });
+            
+            // Apply special formatting to date columns
+            dateColumnIndices.forEach(colIndex => {
+              if (colIndex < row.length && !idColumnIndices.includes(colIndex)) {
+                const cell = excelRow.getCell(colIndex + 1);
+                const value = row[colIndex];
+                
+                if (value instanceof Date) {
+                  cell.value = value;
+                  cell.numFmt = 'dd/mm/yyyy';
+                } else if (typeof value === 'number' && value > 25000 && value < 50000) {
+                  const excelEpoch = new Date(1899, 11, 30);
+                  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+                  const dateObj = new Date(excelEpoch.getTime() + value * millisecondsPerDay);
+                  
+                  cell.value = dateObj;
+                  cell.numFmt = 'dd/mm/yyyy';
+                } else if (typeof value === 'string') {
+                  cell.value = value;
+                  cell.numFmt = '@';
+                }
+              }
+            });
+            
+            // Apply formatting to amount columns
+            amountColumnIndices.forEach(colIndex => {
+              if (colIndex < row.length && !idColumnIndices.includes(colIndex)) {
+                const cell = excelRow.getCell(colIndex + 1);
+                const value = row[colIndex];
+                
+                if (typeof value === 'number') {
+                  cell.numFmt = '#,##0.00';
+                } else if (typeof value === 'string') {
+                  const currencyMatch = value.match(/^[$€£¥]?\s*(\d+(?:\.\d+)?)$/);
+                  if (currencyMatch) {
+                    try {
+                      cell.value = parseFloat(currencyMatch[1]);
+                      cell.numFmt = '#,##0.00';
+                    } catch (e) {
+                      // If parsing fails, keep as string
+                    }
+                  }
+                }
+              }
+            });
+          }
+        });
+        
+        // Apply auto-fit column widths based on content
+        applyOptimalColumnWidths(worksheet, sheetData);
+        
+        // Apply borders to ALL cells
+        worksheet.eachRow((row) => {
+          row.eachCell((cell) => {
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FF000000' } },
+              bottom: { style: 'thin', color: { argb: 'FF000000' } },
+              left: { style: 'thin', color: { argb: 'FF000000' } },
+              right: { style: 'thin', color: { argb: 'FF000000' } }
+            };
+          });
+        });
+      }
+      
+      // Create and download the file
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `separated_by_months_styled_${fileName}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+    } catch (error) {
+      console.error('Error with ExcelJS styling:', error);
+      // Fallback to basic XLSX export
+      exportSeparatedDataBasic(separatedData, fileName);
+    }
+  } else {
+    // Use basic XLSX export
+    exportSeparatedDataBasic(separatedData, fileName);
+  }
+};
+
+/**
+ * Export separated month data using basic XLSX library
+ * @param {Object} separatedData - Separated month data with headerRow and monthsWithData
+ * @param {string} fileName - Original filename for download naming
+ */
+export const exportSeparatedDataBasic = (separatedData, fileName) => {
+  const workbook = XLSX.utils.book_new();
+  
+  separatedData.monthsWithData.forEach(month => {
+    // Create data for this month (header + rows)
+    const sheetData = [separatedData.headerRow, ...month.rows];
+    
+    // Create worksheet
+    const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+    
+    // Calculate column widths for better display
+    const columnWidths = [];
+    if (sheetData.length > 0) {
+      for (let colIndex = 0; colIndex < sheetData[0].length; colIndex++) {
+        let maxLength = 10; // minimum width
+        
+        // Check header length
+        if (sheetData[0][colIndex]) {
+          maxLength = Math.max(maxLength, String(sheetData[0][colIndex]).length);
+        }
+        
+        // Check a few data rows for optimal width
+        for (let rowIndex = 1; rowIndex < Math.min(11, sheetData.length); rowIndex++) {
+          if (sheetData[rowIndex] && sheetData[rowIndex][colIndex]) {
+            maxLength = Math.max(maxLength, String(sheetData[rowIndex][colIndex]).length);
+          }
+        }
+        
+        columnWidths.push({ width: Math.min(maxLength + 2, 50) }); // Add padding, max 50
+      }
+      
+      worksheet['!cols'] = columnWidths;
+    }
+    
+    // Identify ID columns to format as text
+    const headerRow = sheetData[0] || [];
+    const idColumns = identifyIdColumns(headerRow);
+    
+    // Apply text format to ID columns
+    idColumns.forEach(colIndex => {
+      const colLetter = XLSX.utils.encode_col(colIndex);
+      
+      // Format all cells in this column as text
+      for (let rowIndex = 1; rowIndex < sheetData.length; rowIndex++) {
+        const cellRef = colLetter + (rowIndex + 1); // +1 because XLSX is 1-indexed for rows
+        
+        if (worksheet[cellRef]) {
+          if (!worksheet[cellRef].z) {
+            worksheet[cellRef].z = '@'; // '@' is the Excel format code for Text
+          }
+        }
+      }
+    });
+    
+    // Add the sheet with month name
+    XLSX.utils.book_append_sheet(workbook, worksheet, month.name);
+  });
+  
+  // Create binary data and download
+  const excelBinary = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([excelBinary], { 
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+  });
+  
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `separated_by_months_${fileName}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 };

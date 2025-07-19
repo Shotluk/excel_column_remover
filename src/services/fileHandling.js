@@ -1,8 +1,7 @@
-// fileHandling.js - Functions for handling file upload and Excel parsing
 
 import * as XLSX from 'xlsx';
-import { findHeaderRow } from './headerDetection.js';
-import { countEntriesByMonth } from './dateUtilities.js';
+import { findHeaderRow } from '../utils/headerDetection.js';
+import { countEntriesByMonth, findDateColumn } from './dateUtilities.js';
 
 /**
  * Validate uploaded file type
@@ -34,8 +33,16 @@ export const parseExcelFile = (file) => {
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
         
         // Convert to JSON
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-        console.log('Parsed JSON Data:', jsonData);
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1,raw: true });
+        
+        
+        console.log('=== FILE PARSING DEBUG ===');
+        
+        console.log('File name:', file.name);
+        console.log('Total rows in file:', jsonData.length);
+        console.log('First 3 rows:', jsonData.slice(0, 3));
+        
+        
         if (jsonData.length === 0) {
           reject(new Error('The file appears to be empty'));
           return;
@@ -44,6 +51,9 @@ export const parseExcelFile = (file) => {
         // Use improved header detection logic
         const headerRowIndex = findHeaderRow(jsonData);
         const headerRow = jsonData[headerRowIndex];
+        
+        console.log('Detected header row index:', headerRowIndex);
+        console.log('Header row:', headerRow);
         
         if (!headerRow || headerRow.length === 0) {
           reject(new Error('Could not detect headers in the file'));
@@ -56,13 +66,43 @@ export const parseExcelFile = (file) => {
           ...jsonData.slice(headerRowIndex + 1)
         ];
         
-        // Count entries by month
+        console.log('Adjusted data length:', adjustedJsonData.length);
+        console.log('Sample adjusted data (first 3 rows):', adjustedJsonData.slice(0, 3));
+        
+        // Count entries by month with enhanced detection
+        console.log('=== MONTH COUNTING DEBUG ===');
         const monthData = countEntriesByMonth(adjustedJsonData);
         
-        // Find date column index for later use
-        const dateColumnIndex = headerRow.findIndex(
-          header => header === 'Date' || header.toLowerCase() === 'date'
-        );
+        if (monthData) {
+          console.log('Successfully found month data:', monthData);
+        } else {
+          console.log('No month data found - checking manual date column detection...');
+          
+          // Try manual detection with sample data
+          const sampleRows = adjustedJsonData.slice(1, Math.min(6, adjustedJsonData.length));
+          const dateColIndex = findDateColumn(headerRow, sampleRows);
+          
+          console.log('Manual date column detection result:', dateColIndex);
+          if (dateColIndex !== -1) {
+            console.log('Date column header:', headerRow[dateColIndex]);
+            console.log('Sample date values:', sampleRows.map(row => row ? row[dateColIndex] : null));
+          }
+        }
+        
+        // Find date column index for later use (with improved detection)
+        const sampleRows = adjustedJsonData.slice(1, Math.min(6, adjustedJsonData.length));
+        const dateColumnIndex = findDateColumn(headerRow, sampleRows);
+        console.log('Date value at row 5:', jsonData[5][dateColumnIndex]);
+        const sampleDates = adjustedJsonData.slice(1, 10).map(row => {
+          if (!row) return null;
+          const val = row[dateColumnIndex];
+          return { val, type: typeof val, isDate: val instanceof Date };
+        });
+        console.log('Sample date types and values:', sampleDates);
+
+        
+        console.log('Final date column index:', dateColumnIndex);
+        console.log('=== END DEBUG ===');
         
         resolve({
           jsonData,
@@ -108,12 +148,20 @@ export const handleFileUpload = async (event, onSuccess, onError, onLoadingStart
     return;
   }
   
+  console.log('Starting file upload for:', file.name);
   onLoadingStart();
   
   try {
     const parsedData = await parseExcelFile(file);
+    console.log('File upload successful, calling onSuccess with:', {
+      fileName: parsedData.fileName,
+      headerCount: parsedData.headers.length,
+      monthCountsLength: parsedData.monthCounts ? parsedData.monthCounts.length : 0,
+      dateColumnIndex: parsedData.dateColumnIndex
+    });
     onSuccess(parsedData);
   } catch (error) {
+    console.error('File upload error:', error);
     onError(error.message);
   } finally {
     onLoadingEnd();

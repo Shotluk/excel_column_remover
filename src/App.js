@@ -1,6 +1,6 @@
 // App.js
 import React from 'react';
-import ExcelColumnRemover from './ExcelColumnRemover'; // Adjust path as needed
+import ExcelColumnRemover from './components/ExcelColumnRemover'; // Adjust path as needed
 
 function App() {
   return (

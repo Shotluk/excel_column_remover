@@ -1,6 +1,6 @@
-// Modified dataProcessing.js - Fixed column reordering functionality
+// Fixed dataProcessing.js - Accurate month filtering and debugging
 
-import { getMonthFromDate } from './dateUtilities.js';
+import { filterRowsByMonths } from './dateUtilities.js';
 
 /**
  * Select predefined yellow columns (specific to this application)
@@ -51,14 +51,6 @@ export const addNewColumns = (processedData, newHeaders) => {
   ];
   
   return updatedData;
-};
-
-/**
- * Default headers to add - can be customized as needed
- * @returns {Array} Array of default headers to add
- */
-export const getDefaultNewHeaders = () => {
-  return ["Recieved amount", "Recieved date", "Recieved amount", "Recieved date"];
 };
 
 /**
@@ -119,6 +111,8 @@ export const validateColumnOrder = (headers, columnOrder) => {
   return { isValid: true, message: 'Valid column order' };
 };
 
+// Note: filterRowsByMonths function is now imported from dateUtilities.js
+
 /**
  * Process Excel data by removing selected columns, filtering by months, adding new columns, and reordering
  * @param {Array} jsonData - Raw Excel data as array of arrays
@@ -149,10 +143,13 @@ export const processExcelData = (
     throw new Error('No data available for processing');
   }
   
+  console.log("=== EXCEL DATA PROCESSING DEBUG ===");
   console.log("Processing Excel data with column order:", columnOrder);
   console.log("Adding new columns:", newHeaders);
   console.log("Original headers:", originalHeaders);
   console.log("Added columns:", addedColumns);
+  console.log("Selected months to exclude:", selectedMonths);
+  console.log("Selected headers to remove:", selectedHeaders);
   
   // Use provided headers (which now includes both default and custom columns) or empty array
   const columnsToAdd = newHeaders || [];
@@ -164,40 +161,23 @@ export const processExcelData = (
     ...jsonData.slice(headerRowIndex + 1)
   ];
   
-  // Get month codes to filter out
-  const monthCodesToRemove = selectedMonths.map(month => {
-    const foundMonth = monthCounts.find(m => m.month === month);
-    return foundMonth ? foundMonth.code : null;
-  }).filter(code => code !== null);
+  console.log("Initial data rows:", adjustedJsonData.length - 1);
   
-  // First filter rows based on selected months (if any)
+  // STEP 1: Filter rows based on selected months (if any)
   let filteredData = adjustedJsonData;
   
   if (selectedMonths.length > 0 && dateColumnIndex !== -1) {
-    filteredData = [adjustedJsonData[0]]; // Keep header row
-    
-    // Add rows that don't match the excluded months
-    for (let i = 1; i < adjustedJsonData.length; i++) {
-      const row = adjustedJsonData[i];
-      if (row && row[dateColumnIndex]) {
-        const dateValue = String(row[dateColumnIndex]);
-        const monthCode = getMonthFromDate(dateValue);
-        
-        // Include row only if its month is not in the exclusion list
-        if (!monthCode || !monthCodesToRemove.includes(monthCode)) {
-          filteredData.push(row);
-        }
-      } else if (row) {
-        // Include rows with no date value
-        filteredData.push(row);
-      }
-    }
+    filteredData = filterRowsByMonths(adjustedJsonData, selectedMonths, monthCounts, dateColumnIndex);
   }
   
-  // Add new columns (both default and custom) BEFORE removing columns
+  console.log("After month filtering rows:", filteredData.length - 1);
+  
+  // STEP 2: Add new columns (both default and custom) BEFORE removing columns
   const dataWithNewColumns = addNewColumns(filteredData, columnsToAdd);
   
-  // Apply column reordering BEFORE removing columns
+  console.log("After adding new columns:", dataWithNewColumns[0]);
+  
+  // STEP 3: Apply column reordering BEFORE removing columns
   let reorderedData = dataWithNewColumns;
   
   if (columnOrder && columnOrder.length > 0 && originalHeaders && addedColumns) {
@@ -241,7 +221,7 @@ export const processExcelData = (
     }
   }
   
-  // FINALLY, remove selected columns (this should happen LAST)
+  // STEP 4: FINALLY, remove selected columns (this should happen LAST)
   if (selectedHeaders.length > 0) {
     // Get the header row after reordering
     const currentHeaderRow = reorderedData[0];
@@ -261,9 +241,14 @@ export const processExcelData = (
     );
     
     console.log("Final header row after removal:", finalProcessedData[0]);
+    console.log("Final data rows:", finalProcessedData.length - 1);
+    console.log("=== END PROCESSING DEBUG ===");
     return finalProcessedData;
   }
   
+  console.log("No column removal needed");
+  console.log("Final data rows:", reorderedData.length - 1);
+  console.log("=== END PROCESSING DEBUG ===");
   return reorderedData;
 };
 
