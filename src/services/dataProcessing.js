@@ -1,4 +1,4 @@
-// Fixed dataProcessing.js - Accurate month filtering and debugging
+// Enhanced dataProcessing.js - Flexible date column support
 
 import { filterRowsByMonths } from './dateUtilities.js';
 
@@ -111,18 +111,16 @@ export const validateColumnOrder = (headers, columnOrder) => {
   return { isValid: true, message: 'Valid column order' };
 };
 
-// Note: filterRowsByMonths function is now imported from dateUtilities.js
-
 /**
- * Process Excel data by removing selected columns, filtering by months, adding new columns, and reordering
+ * Enhanced process Excel data with flexible date column selection
  * @param {Array} jsonData - Raw Excel data as array of arrays
  * @param {number} headerRowIndex - Index of the header row
  * @param {Array} selectedHeaders - Headers to remove
  * @param {Array} selectedMonths - Months to filter out
  * @param {Array} monthCounts - Month count data for mapping
- * @param {number} dateColumnIndex - Index of the date column
- * @param {Array} newHeaders - Headers for new columns to add (includes both default and custom)
- * @param {Array} columnOrder - New column order indices (optional) - based on combined headers
+ * @param {number} selectedDateColumnIndex - Index of the selected date column for filtering
+ * @param {Array} newHeaders - Headers for new columns to add
+ * @param {Array} columnOrder - New column order indices (optional)
  * @param {Array} originalHeaders - Original headers before adding new columns
  * @param {Array} addedColumns - Custom added columns
  * @returns {Array} Processed data with columns removed, rows filtered, new columns added, and reordered
@@ -133,7 +131,7 @@ export const processExcelData = (
   selectedHeaders, 
   selectedMonths, 
   monthCounts, 
-  dateColumnIndex,
+  selectedDateColumnIndex, // Changed from dateColumnIndex to selectedDateColumnIndex
   newHeaders = null,
   columnOrder = null,
   originalHeaders = null,
@@ -143,15 +141,16 @@ export const processExcelData = (
     throw new Error('No data available for processing');
   }
   
-  console.log("=== EXCEL DATA PROCESSING DEBUG ===");
+  console.log("=== ENHANCED EXCEL DATA PROCESSING DEBUG ===");
   console.log("Processing Excel data with column order:", columnOrder);
   console.log("Adding new columns:", newHeaders);
   console.log("Original headers:", originalHeaders);
   console.log("Added columns:", addedColumns);
   console.log("Selected months to exclude:", selectedMonths);
   console.log("Selected headers to remove:", selectedHeaders);
+  console.log("Selected date column index:", selectedDateColumnIndex); // New log
   
-  // Use provided headers (which now includes both default and custom columns) or empty array
+  // Use provided headers or empty array
   const columnsToAdd = newHeaders || [];
   
   // Create adjusted data with the correct header row
@@ -163,16 +162,17 @@ export const processExcelData = (
   
   console.log("Initial data rows:", adjustedJsonData.length - 1);
   
-  // STEP 1: Filter rows based on selected months (if any)
+  // STEP 1: Filter rows based on selected months using the selected date column
   let filteredData = adjustedJsonData;
   
-  if (selectedMonths.length > 0 && dateColumnIndex !== -1) {
-    filteredData = filterRowsByMonths(adjustedJsonData, selectedMonths, monthCounts, dateColumnIndex);
+  if (selectedMonths.length > 0 && selectedDateColumnIndex !== -1) {
+    console.log(`Filtering by months using date column index: ${selectedDateColumnIndex}`);
+    filteredData = filterRowsByMonths(adjustedJsonData, selectedMonths, monthCounts, selectedDateColumnIndex);
   }
   
   console.log("After month filtering rows:", filteredData.length - 1);
   
-  // STEP 2: Add new columns (both default and custom) BEFORE removing columns
+  // STEP 2: Add new columns BEFORE removing columns
   const dataWithNewColumns = addNewColumns(filteredData, columnsToAdd);
   
   console.log("After adding new columns:", dataWithNewColumns[0]);
@@ -242,13 +242,13 @@ export const processExcelData = (
     
     console.log("Final header row after removal:", finalProcessedData[0]);
     console.log("Final data rows:", finalProcessedData.length - 1);
-    console.log("=== END PROCESSING DEBUG ===");
+    console.log("=== END ENHANCED PROCESSING DEBUG ===");
     return finalProcessedData;
   }
   
   console.log("No column removal needed");
   console.log("Final data rows:", reorderedData.length - 1);
-  console.log("=== END PROCESSING DEBUG ===");
+  console.log("=== END ENHANCED PROCESSING DEBUG ===");
   return reorderedData;
 };
 
